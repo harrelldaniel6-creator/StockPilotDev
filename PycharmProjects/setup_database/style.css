@@ -1,0 +1,25 @@
+/* General table styling */
+table {
+    border-collapse: collapse; /* Removes the gap between borders */
+    width: 70%; /* Makes the table a reasonable width on the page */
+    margin: 20px 0;
+}
+
+/* Styles for all cells (header and data) */
+th, td {
+    border: 1px solid #ddd; /* Adds a thin gray border */
+    padding: 10px; /* Adds space around the text */
+    text-align: left; /* Aligns text to the left */
+}
+
+/* Specific styling for the top header row */
+th {
+    background-color: #04AA6D; /* Green background */
+    color: white; /* White text */
+    font-weight: bold;
+}
+
+/* Styling for alternating rows (zebra-striping) */
+tr:nth-child(even) {
+    background-color: #f2f2f2; /* Light gray background for even rows */
+}
