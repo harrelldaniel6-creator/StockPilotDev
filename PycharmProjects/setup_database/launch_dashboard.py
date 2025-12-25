@@ -1,6 +1,7 @@
 from database_setup import get_db_connection
 import pandas as pd
 from dash import dcc, html, Dash
+import os
 # Add other imports you might have
 
 # --- Start of updated database interaction logic ---
@@ -35,5 +36,7 @@ app.layout = html.Div([
 
 
 if __name__ == '__main__':
-    # Run the server with debug mode enabled
-    app.run_server(debug=True)
+    # Retrieve the PORT environment variable provided by Render, defaulting to 8050 for local testing
+    port = int(os.environ.get('PORT', 8050))
+    # Bind to host 0.0.0.0, which allows external access on Render, and set debug to False
+    app.run_server(host='0.0.0.0', port=port, debug=False)
