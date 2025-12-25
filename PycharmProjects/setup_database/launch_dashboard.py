@@ -1,22 +1,39 @@
-import os
-import subprocess
-import sys
+from database_setup import get_db_connection
+import pandas as pd
+from dash import dcc, html, Dash
+# Add other imports you might have
 
-# Get the absolute path to the directory this script is running from
-script_dir = os.path.dirname(os.path.abspath(__file__))
-# !!! Corrected this line to use 'dashboard_app.py' (with an underscore) !!!
-dashboard_script = os.path.join(script_dir, 'dashboard_app.py')
+# --- Start of updated database interaction logic ---
 
-# Ensure we use the same Python interpreter currently running this script
-interpreter = sys.executable
+def fetch_data_for_dashboard():
+    """
+    Fetches data needed to populate the dashboard.
+    """
+    # Use the centralized function here
+    conn = get_db_connection()
+    # Example SQL query to get stock data
+    df = pd.read_sql_query("SELECT * FROM 'stock data'", conn)
+    conn.close()
+    return df
 
-print(f"Attempting to run: {dashboard_script} using {interpreter}")
+# --- End of updated database interaction logic ---
 
-# Use subprocess to run the dashboard script correctly
-try:
-    # We use sys.executable to ensure the correct python env is used
-    subprocess.run([interpreter, dashboard_script], check=True)
-except subprocess.CalledProcessError as e:
-    print(f"Dashboard script failed with return code {e.returncode}")
-except FileNotFoundError:
-    print(f"Error: Could not find the dashboard script at {dashboard_script}")
+# Initialize the Dash app
+app = Dash(__name__)
+
+# Example of using the function later in the file:
+stock_data_df = fetch_data_for_dashboard()
+print(stock_data_df.head())
+
+# Define the layout of your app (example structure)
+app.layout = html.Div([
+    html.H1("StockPilot Dashboard"),
+    html.Div("Your data will go here.")
+])
+
+# Add your callbacks here if you have any...
+
+
+if __name__ == '__main__':
+    # Run the server with debug mode enabled
+    app.run_server(debug=True)

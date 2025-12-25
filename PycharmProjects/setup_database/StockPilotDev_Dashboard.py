@@ -7,9 +7,10 @@ import sqlite3  # Import sqlite3 library
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import datetime
+from database_setup import setup_database_schema
 
 # --- Configuration for Logging (Logs to both file and console) ---
-logging.basicConfig(
+logging.basicConfig(git add PycharmProjects/StockPilotDev/StockPilotDev_Dashboard.pygit add PycharmProjects/StockPilotDev/StockPilotDev_Dashboard.py
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
