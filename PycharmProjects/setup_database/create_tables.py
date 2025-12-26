@@ -15,7 +15,7 @@ def create_tables():
 
         # NOTE: If your table name has a space, you MUST use double quotes around it
         create_table_query = """
-        CREATE TABLE IF NOT EXISTS "stock data" (
+        CREATE TABLE IF NOT EXISTS "stock_data" (
             id SERIAL PRIMARY KEY,
             symbol VARCHAR(10) NOT NULL,
             price NUMERIC(10, 2) NOT NULL,
@@ -25,7 +25,7 @@ def create_tables():
         """
         cur.execute(create_table_query)
         conn.commit()
-        print("Table 'stock data' ensured to exist.")
+        print("Table 'stock_data' ensured to exist.")
         cur.close()
         conn.close()
 
