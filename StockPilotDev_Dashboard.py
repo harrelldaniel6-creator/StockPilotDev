@@ -36,10 +36,10 @@ def create_database():
     conn.close()
 
 
-def analyze_data_and_generate_alerts(sales_data_df):
+def analyze_data_and_generate_alerts(sales_data_df, current_stock_levels):
     """
     Analyzes sales data, calculates alerts for items with < 7 days stock remaining,
-    and inserts them into the database.
+    using actual current stock levels, and inserts them into the database.
     """
     conn = sqlite3.connect('stockpilot.db')
     cursor = conn.cursor()
@@ -58,16 +58,18 @@ def analyze_data_and_generate_alerts(sales_data_df):
     days_covered = (sales_data_df['Order Date'].max() - sales_data_df['Order Date'].min()).days + 1
     avg_daily_sales = total_sales_per_item / days_covered
 
-    # 3. Determine alerts based on 7-day threshold (using dummy current stock of 10)
+    # 3. Determine alerts based on 7-day threshold using provided current stock levels
     reorder_threshold_days = 7
-    required_stock = avg_daily_sales * reorder_threshold_days
-    potential_alerts = required_stock[required_stock > 10].index.tolist()
+    required_stock_for_period = avg_daily_sales * reorder_threshold_days
 
-    # 4. Create alerts_df DataFrame with the required columns
     alerts_list = []
     current_date = pd.Timestamp.today().strftime('%Y-%m-%d')
-    for item_type in potential_alerts:
-        alerts_list.append({'alert_date': current_date, 'product_name': item_type})
+
+    for item_type, required_stock in required_stock_for_period.items():
+        # Use the stock level provided in the form
+        current_stock = current_stock_levels.get(item_type, 0)
+        if current_stock < required_stock:
+            alerts_list.append({'alert_date': current_date, 'product_name': item_type})
 
     alerts_df = pd.DataFrame(alerts_list)
 
@@ -87,27 +89,37 @@ st.title("StockPilot Re-Order Alerts Dashboard")
 # Call the database creation function FIRST so the table exists
 create_database()
 
-# --- CSV UPLOAD FEATURE ---
+# --- CSV UPLOAD FEATURE AND STOCK FORM ---
 
 st.subheader("Upload Client Sales Data (CSV)")
 uploaded_file = st.file_uploader("Choose a CSV file", type="csv")
 
 if uploaded_file is not None:
     try:
-        # Read the CSV file into a pandas DataFrame
         client_data_df = pd.read_csv(uploaded_file)
-        st.success("File uploaded successfully! Starting analysis...")
 
-        # Call the analysis function
-        analyze_data_and_generate_alerts(client_data_df)
+        # Display the form for stock levels
+        st.subheader("Enter Current Stock Levels")
+        with st.form("stock_level_form"):
+            # Identify unique products from the uploaded file
+            unique_products = client_data_df['Item Type'].unique()
+            stock_inputs = {}
+            for product in unique_products:
+                stock_inputs[product] = st.number_input(f"Stock for '{product}'", min_value=0, value=0, step=1)
+
+            submitted = st.form_submit_button("Run Analysis and Generate Alerts")
+
+            if submitted:
+                st.success("File uploaded successfully! Starting analysis...")
+                # Call the analysis function with the stock inputs
+                analyze_data_and_generate_alerts(client_data_df, stock_inputs)
 
     except Exception as e:
-        # This will catch errors during the analysis or database insertion
         st.error(f"An error occurred during file processing: {e}")
 
 # --- DISPLAY ALERTS ---
 
-# Fetch data and display it (now the table exists!)
+# Fetch data and display it
 alert_data = get_reorder_alerts()
 
 if alert_data.empty:
