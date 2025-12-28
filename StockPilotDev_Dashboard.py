@@ -1,4 +1,3 @@
-from streamlit.web.server import Server as StreamlitServer
 import streamlit as st
 import pandas as pd
 import sqlite3
@@ -7,9 +6,9 @@ import shopify  # Make sure to import the new library
 
 # --- SHOPIFY API CONFIGURATION ---
 # !! REPLACE THESE PLACEHOLDER VALUES WITH YOUR ACTUAL CREDENTIALS !!
-SHOPIFY_SHOP_URL = "stockpilotdev.myshopify.com"
-SHOPIFY_API_KEY = "f2b14664e55eba76e5d2aefae8903b21"
-SHOPIFY_API_PASSWORD = "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"
+SHOPIFY_SHOP_URL = "your-shop-name.myshopify.com"
+SHOPIFY_API_KEY = "YOUR_API_KEY"
+SHOPIFY_API_PASSWORD = "YOUR_API_PASSWORD"
 
 
 # --- FUNCTION DEFINITIONS ---
@@ -114,7 +113,6 @@ def fetch_sales_data_from_shopify():
                     'Units Sold': line_item.quantity
                 })
 
-        # Format the data into the structure our analysis function expects
         sales_df = pd.DataFrame(sales_data)
         st.success(f"Successfully fetched {len(sales_df)} line items from Shopify.")
         return sales_df
@@ -129,22 +127,39 @@ def fetch_sales_data_from_shopify():
 st.set_page_config(page_title="StockPilot Dashboard", layout="wide")
 st.title("StockPilot Re-Order Alerts Dashboard")
 
+# Initialize session state for data storage if it doesn't exist
+if 'client_data' not in st.session_state:
+    st.session_state['client_data'] = pd.DataFrame()
+
 create_database()
 
 # --- SIDEBAR FOR INPUTS AND FETCH BUTTON ---
 with st.sidebar:
     st.subheader("Data Input & Analysis")
 
-    # Use API Fetch button instead of CSV Uploader
+    # Option 1: Fetch data via Shopify API
     if st.button("Fetch Latest Data from Shopify API"):
         client_data_df = fetch_sales_data_from_shopify()
         if client_data_df is not None and not client_data_df.empty:
             st.session_state['client_data'] = client_data_df
         elif client_data_df is not None and client_data_df.empty:
             st.warning("No sales data found for analysis.")
+            st.session_state['client_data'] = pd.DataFrame()  # Clear state if no data
 
-# Check if data exists in session state before proceeding
-if 'client_data' in st.session_state and not st.session_state['client_data'].empty:
+    st.markdown("---")  # Add a separator line
+
+    # Option 2: Upload CSV file (Original Method)
+    uploaded_file = st.file_uploader("Or Upload Client Sales Data (CSV)", type="csv")
+    if uploaded_file is not None:
+        try:
+            client_data_df = pd.read_csv(uploaded_file)
+            st.session_state['client_data'] = client_data_df
+            st.success("CSV file uploaded successfully.")
+        except Exception as e:
+            st.error(f"An error occurred during file processing: {e}")
+
+# Check if data exists in session state before proceeding with the main form
+if not st.session_state['client_data'].empty:
     client_data_df = st.session_state['client_data']
 
     # Display the form for stock levels in the main area
