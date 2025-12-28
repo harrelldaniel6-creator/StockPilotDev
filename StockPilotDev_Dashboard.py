@@ -6,13 +6,12 @@ def create_database():
     """Creates the database and necessary tables if they don't exist."""
     conn = sqlite3.connect('stockpilot.db')
     cursor = conn.cursor()
-    # Create the reorder_alerts table if it doesn't exist
+    Create the reorder_alerts table if it doesn't exist
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS reorder_alerts (
             id INTEGER PRIMARY KEY,
             alert_date TEXT,
             product_name TEXT,
-            # Add other columns as needed for your schema
         )
     ''')
     conn.commit()
