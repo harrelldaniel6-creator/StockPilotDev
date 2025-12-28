@@ -2,6 +2,13 @@ import streamlit as st
 import pandas as pd
 import sqlite3
 import os
+import shopify  # Make sure to import the new library
+
+# --- SHOPIFY API CONFIGURATION ---
+# !! REPLACE THESE PLACEHOLDER VALUES WITH YOUR ACTUAL CREDENTIALS !!
+SHOPIFY_SHOP_URL = "stockpilotdev.myshopify.com"
+SHOPIFY_API_KEY = "f2b14664e55eba76e5d2aefae8903b21"
+SHOPIFY_API_PASSWORD = "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"
 
 
 # --- FUNCTION DEFINITIONS ---
@@ -50,12 +57,10 @@ def analyze_data_and_generate_alerts(sales_data_df, current_stock_levels):
     conn.commit()
 
     # --- INVENTORY ANALYSIS LOGIC ---
-
     sales_data_df['Order Date'] = pd.to_datetime(sales_data_df['Order Date'])
     total_sales_per_item = sales_data_df.groupby('Item Type')['Units Sold'].sum()
     days_covered = (sales_data_df['Order Date'].max() - sales_data_df['Order Date'].min()).days + 1
     avg_daily_sales = (total_sales_per_item / days_covered).round(2)
-
     reorder_threshold_days = 7
     required_stock_for_period = (avg_daily_sales * reorder_threshold_days).round(2)
 
@@ -88,51 +93,85 @@ def analyze_data_and_generate_alerts(sales_data_df, current_stock_levels):
     return detailed_analysis_df
 
 
+def fetch_sales_data_from_shopify():
+    """Fetches recent orders from Shopify API and returns a pandas DataFrame."""
+    try:
+        # Establish connection session
+        api_url = f"https://{SHOPIFY_API_KEY}:{SHOPIFY_API_PASSWORD}@{SHOPIFY_SHOP_URL}/admin"
+        shopify.ShopifyResource.set_site(api_url)
+
+        st.info("Fetching recent orders from Shopify API...")
+        orders = shopify.Order.find(status='any', limit=100)  # Fetch up to 100 recent orders
+
+        sales_data = []
+        for order in orders:
+            order_date = order.created_at
+            for line_item in order.line_items:
+                sales_data.append({
+                    'Order Date': order_date,
+                    'Item Type': line_item.title,
+                    'Units Sold': line_item.quantity
+                })
+
+        # Format the data into the structure our analysis function expects
+        sales_df = pd.DataFrame(sales_data)
+        st.success(f"Successfully fetched {len(sales_df)} line items from Shopify.")
+        return sales_df
+
+    except Exception as e:
+        st.error(f"Error fetching data from Shopify API: {e}")
+        return None
+
+
 # --- MAIN APPLICATION LOGIC ---
 
+st.set_page_config(page_title="StockPilot Dashboard", layout="wide")
 st.title("StockPilot Re-Order Alerts Dashboard")
 
 create_database()
 
-# --- SIDEBAR FOR UPLOAD AND INPUTS ---
+# --- SIDEBAR FOR INPUTS AND FETCH BUTTON ---
 with st.sidebar:
     st.subheader("Data Input & Analysis")
-    uploaded_file = st.file_uploader("Upload Client Sales Data (CSV)", type="csv")
 
-if uploaded_file is not None:
-    try:
-        client_data_df = pd.read_csv(uploaded_file)
+    # Use API Fetch button instead of CSV Uploader
+    if st.button("Fetch Latest Data from Shopify API"):
+        client_data_df = fetch_sales_data_from_shopify()
+        if client_data_df is not None and not client_data_df.empty:
+            st.session_state['client_data'] = client_data_df
+        elif client_data_df is not None and client_data_df.empty:
+            st.warning("No sales data found for analysis.")
 
-        # Display the form for stock levels in the main area
-        st.subheader("Enter Current Stock Levels")
-        with st.form("stock_level_form"):
-            unique_products = client_data_df['Item Type'].unique()
-            stock_inputs = {}
-            # Use columns for a cleaner input form
-            cols = st.columns(3)
-            for i, product in enumerate(unique_products):
-                with cols[i % 3]:
-                    stock_inputs[product] = st.number_input(f"Stock for '{product}'", min_value=0, value=0, step=1)
+# Check if data exists in session state before proceeding
+if 'client_data' in st.session_state and not st.session_state['client_data'].empty:
+    client_data_df = st.session_state['client_data']
 
-            submitted = st.form_submit_button("Run Analysis and Generate Alerts")
+    # Display the form for stock levels in the main area
+    st.subheader("Enter Current Stock Levels")
+    with st.form("stock_level_form"):
+        unique_products = client_data_df['Item Type'].unique()
+        stock_inputs = {}
+        # Use columns for a cleaner input form
+        cols = st.columns(3)
+        for i, product in enumerate(unique_products):
+            with cols[i % 3]:
+                stock_inputs[product] = st.number_input(f"Stock for '{product}'", min_value=0, value=0, step=1)
 
-            if submitted:
-                # Call the analysis function and capture the detailed results
-                full_results_df = analyze_data_and_generate_alerts(client_data_df, stock_inputs)
+        submitted = st.form_submit_button("Run Analysis and Generate Alerts")
 
-                # Display the full results right after analysis completes using a container
-                with st.container():
-                    st.subheader("Full Inventory Analysis Results")
-                    st.dataframe(full_results_df)
+        if submitted:
+            # Call the analysis function and capture the detailed results
+            full_results_df = analyze_data_and_generate_alerts(client_data_df, stock_inputs)
 
-    except Exception as e:
-        st.error(f"An error occurred during file processing: {e}")
+            # Display the full results right after analysis completes using a container
+            with st.container():
+                st.subheader("Full Inventory Analysis Results")
+                st.dataframe(full_results_df)
 
 # --- DISPLAY ALERTS IN MAIN AREA ---
-
+st.subheader("Recent Alerts")
 alert_data = get_reorder_alerts()
 
-st.subheader("Recent Alerts")
 if alert_data.empty:
     st.info("No re-order alerts currently logged.")
 else:
