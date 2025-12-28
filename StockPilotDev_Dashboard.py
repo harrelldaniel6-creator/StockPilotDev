@@ -20,10 +20,6 @@ if alert_data.empty:
 else:
     st.subheader("Recent Alerts")
     st.dataframe(alert_data) # Displays the data nicely in a table format
-=======
-import streamlit as st
-import sqlite3
-import pandas as pd
 
 def get_reorder_alerts():
     """Fetches all alerts from the database."""
