@@ -41,3 +41,7 @@ psycopg2-binary
 streamlit
 pandas
 ShopifyAPI
+streamlit
+pandas
+ShopifyAPI
+gunicorn
