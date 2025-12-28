@@ -1,3 +1,4 @@
+from streamlit.web.server import Server as StreamlitServer
 import streamlit as st
 import pandas as pd
 import sqlite3
