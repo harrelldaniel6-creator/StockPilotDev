@@ -84,6 +84,9 @@ def analyze_data_and_generate_alerts(sales_data_df):
 
 st.title("StockPilot Re-Order Alerts Dashboard")
 
+# Call the database creation function FIRST so the table exists
+create_database()
+
 # --- CSV UPLOAD FEATURE ---
 
 st.subheader("Upload Client Sales Data (CSV)")
@@ -99,18 +102,16 @@ if uploaded_file is not None:
         analyze_data_and_generate_alerts(client_data_df)
 
     except Exception as e:
+        # This will catch errors during the analysis or database insertion
         st.error(f"An error occurred during file processing: {e}")
 
 # --- DISPLAY ALERTS ---
 
-# Call the database creation function first
-create_database()
-
-# Fetch data and display it
+# Fetch data and display it (now the table exists!)
 alert_data = get_reorder_alerts()
 
 if alert_data.empty:
     st.info("No re-order alerts currently logged.")
 else:
     st.subheader("Recent Alerts")
-    st.dataframe(alert_data) # Displays the data nicely in a table format
+    st.dataframe(alert_data)  # Displays the data nicely in a table format
