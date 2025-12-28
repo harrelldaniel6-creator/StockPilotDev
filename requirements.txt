@@ -37,5 +37,9 @@ tzdata==2025.3
 urllib3==2.6.2
 watchdog==6.0.0
 gunicorn
+<<<<<<< HEAD
 
+=======
+psycopg2-binary
+>>>>>>> 9fa752d5c80fb25887288b10a3f5bfdc90cc6f57
 
