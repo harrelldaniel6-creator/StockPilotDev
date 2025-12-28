@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 import streamlit as st
 import sqlite3
 import pandas as pd
@@ -44,4 +43,4 @@ if alert_data.empty:
 else:
     st.subheader("Recent Alerts")
     st.dataframe(alert_data) # Displays the data nicely in a table format
->>>>>>> 9fa752d5c80fb25887288b10a3f5bfdc90cc6f57
+
