@@ -33,6 +33,27 @@ def create_database():
 
 st.title("StockPilot Re-Order Alerts Dashboard")
 
+# --- CSV UPLOAD FEATURE ---
+
+st.subheader("Upload Client Sales Data (CSV)")
+uploaded_file = st.file_uploader("Choose a CSV file", type="csv")
+
+if uploaded_file is not None:
+    try:
+        # Read the CSV file into a pandas DataFrame
+        client_data_df = pd.read_csv(uploaded_file)
+        st.success("File uploaded successfully!")
+        st.write("Preview of the uploaded data:")
+        st.dataframe(client_data_df.head())
+
+        # Here is where you will add your analysis logic later:
+        # analyze_data_and_generate_alerts(client_data_df)
+
+    except Exception as e:
+        st.error(f"An error occurred during file processing: {e}")
+
+# --- DISPLAY ALERTS ---
+
 # Call the database creation function first
 create_database()
 
