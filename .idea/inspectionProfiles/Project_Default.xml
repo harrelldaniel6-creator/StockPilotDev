@@ -1,0 +1,37 @@
+<component name="InspectionProjectProfileManager">
+  <profile version="1.0">
+    <option name="myName" value="Project Default" />
+    <inspection_tool class="Eslint" enabled="true" level="WARNING" enabled_by_default="true" />
+    <inspection_tool class="PyPackageRequirementsInspection" enabled="true" level="WARNING" enabled_by_default="true">
+      <option name="ignoredPackages">
+        <list>
+          <option value="beautifulsoup4" />
+          <option value="cffi" />
+          <option value="curl_cffi" />
+          <option value="dash" />
+          <option value="Flask" />
+          <option value="frozendict" />
+          <option value="greenlet" />
+          <option value="importlib_metadata" />
+          <option value="itsdangerous" />
+          <option value="multitasking" />
+          <option value="nest-asyncio" />
+          <option value="peewee" />
+          <option value="platformdirs" />
+          <option value="plotly" />
+          <option value="pycparser" />
+          <option value="retrying" />
+          <option value="setuptools" />
+          <option value="soupsieve" />
+          <option value="SQLAlchemy" />
+          <option value="tabulate" />
+          <option value="websockets" />
+          <option value="Werkzeug" />
+          <option value="yfinance" />
+          <option value="zipp" />
+          <option value="gunicorn" />
+        </list>
+      </option>
+    </inspection_tool>
+  </profile>
+</component>
