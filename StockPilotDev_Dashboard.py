@@ -3,12 +3,13 @@ import pandas as pd
 import sqlite3
 import os
 import shopify  # Make sure to import the new library
+from streamlit.web.server import Server as StreamlitServer  # Required for Gunicorn compatibility
 
 # --- SHOPIFY API CONFIGURATION ---
 # !! REPLACE THESE PLACEHOLDER VALUES WITH YOUR ACTUAL CREDENTIALS !!
-SHOPIFY_SHOP_URL = "stockpilotdev.myshopify.com"
-SHOPIFY_API_KEY = "f2b14664e55eba76e5d2aefae8903b21"
-SHOPIFY_API_PASSWORD = "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"
+SHOPIFY_SHOP_URL = "your-shop-name.myshopify.com"
+SHOPIFY_API_KEY = "YOUR_API_KEY"
+SHOPIFY_API_PASSWORD = "YOUR_API_PASSWORD"
 
 
 # --- FUNCTION DEFINITIONS ---
@@ -122,6 +123,39 @@ def fetch_sales_data_from_shopify():
         return None
 
 
+def fetch_inventory_levels_from_shopify(product_titles):
+    """Fetches current inventory levels for specified products from Shopify API."""
+    try:
+        api_url = f"https://{SHOPIFY_API_KEY}:{SHOPIFY_API_PASSWORD}@{SHOPIFY_SHOP_URL}/admin"
+        shopify.ShopifyResource.set_site(api_url)
+
+        st.info("Fetching current inventory levels from Shopify API...")
+        inventory_levels = {}
+
+        # Iterate through product titles to find inventory levels
+        for title in product_titles:
+            # We need to find the product ID first
+            products = shopify.Product.find(title=title)
+            if products:
+                product = products[0]
+                # Then find inventory levels for associated inventory item IDs
+                for variant in product.variants:
+                    inv_levels = shopify.InventoryLevel.find(inventory_item_ids=variant.inventory_item_id)
+                    for level in inv_levels:
+                        # Assuming single location for simplicity
+                        inventory_levels[title] = level.available
+                        break  # Exit inner loop once level is found
+                    if title in inventory_levels:
+                        break  # Exit variant loop
+
+        st.success("Successfully fetched current inventory levels from Shopify.")
+        return inventory_levels
+
+    except Exception as e:
+        st.error(f"Error fetching inventory levels from Shopify API: {e}")
+        return {}
+
+
 # --- MAIN APPLICATION LOGIC ---
 
 st.set_page_config(page_title="StockPilot Dashboard", layout="wide")
@@ -130,6 +164,8 @@ st.title("StockPilot Re-Order Alerts Dashboard")
 # Initialize session state for data storage if it doesn't exist
 if 'client_data' not in st.session_state:
     st.session_state['client_data'] = pd.DataFrame()
+if 'stock_levels' not in st.session_state:
+    st.session_state['stock_levels'] = {}
 
 create_database()
 
@@ -142,9 +178,12 @@ with st.sidebar:
         client_data_df = fetch_sales_data_from_shopify()
         if client_data_df is not None and not client_data_df.empty:
             st.session_state['client_data'] = client_data_df
+            # Automatically fetch inventory levels after sales data is loaded
+            product_titles = client_data_df['Item Type'].unique()
+            st.session_state['stock_levels'] = fetch_inventory_levels_from_shopify(product_titles)
         elif client_data_df is not None and client_data_df.empty:
             st.warning("No sales data found for analysis.")
-            st.session_state['client_data'] = pd.DataFrame()  # Clear state if no data
+            st.session_state['client_data'] = pd.DataFrame()
 
     st.markdown("---")  # Add a separator line
 
@@ -154,6 +193,7 @@ with st.sidebar:
         try:
             client_data_df = pd.read_csv(uploaded_file)
             st.session_state['client_data'] = client_data_df
+            st.session_state['stock_levels'] = {}  # Clear API stock levels if using CSV
             st.success("CSV file uploaded successfully.")
         except Exception as e:
             st.error(f"An error occurred during file processing: {e}")
@@ -170,8 +210,11 @@ if not st.session_state['client_data'].empty:
         # Use columns for a cleaner input form
         cols = st.columns(3)
         for i, product in enumerate(unique_products):
+            current_stock_value = st.session_state['stock_levels'].get(product, 0)  # Use fetched value as default
             with cols[i % 3]:
-                stock_inputs[product] = st.number_input(f"Stock for '{product}'", min_value=0, value=0, step=1)
+                # Use the fetched inventory value as the default value in the number input field
+                stock_inputs[product] = st.number_input(f"Stock for '{product}'", min_value=0,
+                                                        value=current_stock_value, step=1)
 
         submitted = st.form_submit_button("Run Analysis and Generate Alerts")
 
