@@ -6,9 +6,9 @@ import shopify  # Make sure to import the new library
 
 # --- SHOPIFY API CONFIGURATION ---
 # !! REPLACE THESE PLACEHOLDER VALUES WITH YOUR ACTUAL CREDENTIALS !!
-SHOPIFY_SHOP_URL = "your-shop-name.myshopify.com"
-SHOPIFY_API_KEY = "YOUR_API_KEY"
-SHOPIFY_API_PASSWORD = "YOUR_API_PASSWORD"
+SHOPIFY_SHOP_URL = "stockpilotdev.myshopify.com"
+SHOPIFY_API_KEY = "f2b14664e55eba76e5d2aefae8903b21"
+SHOPIFY_API_PASSWORD = "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"
 
 
 # --- FUNCTION DEFINITIONS ---
