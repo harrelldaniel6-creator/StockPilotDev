@@ -7,9 +7,9 @@ from streamlit.web.server import Server as StreamlitServer  # Required for Gunic
 
 # --- SHOPIFY API CONFIGURATION ---
 # !! REPLACE THESE PLACEHOLDER VALUES WITH YOUR ACTUAL CREDENTIALS !!
-SHOPIFY_SHOP_URL = "stockpilotdev.myshopify.com"
-SHOPIFY_API_KEY = "f2b14664e55eba76e5d2aefae8903b21"
-SHOPIFY_API_PASSWORD = "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"
+SHOPIFY_SHOP_URL = "your-shop-name.myshopify.com"
+SHOPIFY_API_KEY = "YOUR_API_KEY"
+SHOPIFY_API_PASSWORD = "YOUR_API_PASSWORD"
 
 
 # --- FUNCTION DEFINITIONS ---
@@ -96,6 +96,7 @@ def analyze_data_and_generate_alerts(sales_data_df, current_stock_levels):
 
 def fetch_sales_data_from_shopify():
     """Fetches recent orders from Shopify API and returns a pandas DataFrame."""
+    # ... (function body is the same as before) ...
     try:
         # Establish connection session
         api_url = f"https://{SHOPIFY_API_KEY}:{SHOPIFY_API_PASSWORD}@{SHOPIFY_SHOP_URL}/admin"
@@ -125,6 +126,7 @@ def fetch_sales_data_from_shopify():
 
 def fetch_inventory_levels_from_shopify(product_titles):
     """Fetches current inventory levels for specified products from Shopify API."""
+    # ... (function body is the same as before) ...
     try:
         api_url = f"https://{SHOPIFY_API_KEY}:{SHOPIFY_API_PASSWORD}@{SHOPIFY_SHOP_URL}/admin"
         shopify.ShopifyResource.set_site(api_url)
@@ -132,21 +134,17 @@ def fetch_inventory_levels_from_shopify(product_titles):
         st.info("Fetching current inventory levels from Shopify API...")
         inventory_levels = {}
 
-        # Iterate through product titles to find inventory levels
         for title in product_titles:
-            # We need to find the product ID first
             products = shopify.Product.find(title=title)
             if products:
-                product = products[0]
-                # Then find inventory levels for associated inventory item IDs
+                product = products
                 for variant in product.variants:
                     inv_levels = shopify.InventoryLevel.find(inventory_item_ids=variant.inventory_item_id)
                     for level in inv_levels:
-                        # Assuming single location for simplicity
                         inventory_levels[title] = level.available
-                        break  # Exit inner loop once level is found
+                        break
                     if title in inventory_levels:
-                        break  # Exit variant loop
+                        break
 
         st.success("Successfully fetched current inventory levels from Shopify.")
         return inventory_levels
@@ -166,6 +164,8 @@ if 'client_data' not in st.session_state:
     st.session_state['client_data'] = pd.DataFrame()
 if 'stock_levels' not in st.session_state:
     st.session_state['stock_levels'] = {}
+if 'full_results' not in st.session_state:
+    st.session_state['full_results'] = pd.DataFrame()  # New session state for analysis results
 
 create_database()
 
@@ -173,14 +173,19 @@ create_database()
 with st.sidebar:
     st.subheader("Data Input & Analysis")
 
-    # Option 1: Fetch data via Shopify API
+    # Option 1: Fetch data via Shopify API (now runs full analysis automatically)
     if st.button("Fetch Latest Data from Shopify API"):
         client_data_df = fetch_sales_data_from_shopify()
         if client_data_df is not None and not client_data_df.empty:
             st.session_state['client_data'] = client_data_df
             # Automatically fetch inventory levels after sales data is loaded
             product_titles = client_data_df['Item Type'].unique()
-            st.session_state['stock_levels'] = fetch_inventory_levels_from_shopify(product_titles)
+            current_stock_levels = fetch_inventory_levels_from_shopify(product_titles)
+            st.session_state['stock_levels'] = current_stock_levels
+
+            # --- NEW: Run analysis automatically here ---
+            st.session_state['full_results'] = analyze_data_and_generate_alerts(client_data_df, current_stock_levels)
+
         elif client_data_df is not None and client_data_df.empty:
             st.warning("No sales data found for analysis.")
             st.session_state['client_data'] = pd.DataFrame()
@@ -194,38 +199,41 @@ with st.sidebar:
             client_data_df = pd.read_csv(uploaded_file)
             st.session_state['client_data'] = client_data_df
             st.session_state['stock_levels'] = {}  # Clear API stock levels if using CSV
+            st.session_state['full_results'] = pd.DataFrame()  # Clear old results
             st.success("CSV file uploaded successfully.")
         except Exception as e:
             st.error(f"An error occurred during file processing: {e}")
 
-# Check if data exists in session state before proceeding with the main form
-if not st.session_state['client_data'].empty:
-    client_data_df = st.session_state['client_data']
+# --- MAIN APPLICATION LOGIC ---
 
-    # Display the form for stock levels in the main area
-    st.subheader("Enter Current Stock Levels")
+# Check if data exists in session state before proceeding with the manual form/results display
+if not st.session_state['client_data'].empty:
+
+    # --- Option to manually run analysis (moved outside sidebar) ---
+    st.subheader("Run Manual Analysis (Optional)")
     with st.form("stock_level_form"):
-        unique_products = client_data_df['Item Type'].unique()
+        # ... (stock level inputs form code is the same as before, uses fetched defaults) ...
+        unique_products = st.session_state['client_data']['Item Type'].unique()
         stock_inputs = {}
-        # Use columns for a cleaner input form
         cols = st.columns(3)
         for i, product in enumerate(unique_products):
-            current_stock_value = st.session_state['stock_levels'].get(product, 0)  # Use fetched value as default
+            current_stock_value = st.session_state['stock_levels'].get(product, 0)
             with cols[i % 3]:
-                # Use the fetched inventory value as the default value in the number input field
                 stock_inputs[product] = st.number_input(f"Stock for '{product}'", min_value=0,
                                                         value=current_stock_value, step=1)
 
-        submitted = st.form_submit_button("Run Analysis and Generate Alerts")
+        submitted = st.form_submit_button("Run Analysis and Generate Alerts Manually")
 
         if submitted:
             # Call the analysis function and capture the detailed results
-            full_results_df = analyze_data_and_generate_alerts(client_data_df, stock_inputs)
+            st.session_state['full_results'] = analyze_data_and_generate_alerts(st.session_state['client_data'],
+                                                                                stock_inputs)
 
-            # Display the full results right after analysis completes using a container
-            with st.container():
-                st.subheader("Full Inventory Analysis Results")
-                st.dataframe(full_results_df)
+    # Display the full results if they exist in session state
+    if not st.session_state['full_results'].empty:
+        with st.container():
+            st.subheader("Full Inventory Analysis Results")
+            st.dataframe(st.session_state['full_results'])
 
 # --- DISPLAY ALERTS IN MAIN AREA ---
 st.subheader("Recent Alerts")
@@ -234,6 +242,5 @@ alert_data = get_reorder_alerts()
 if alert_data.empty:
     st.info("No re-order alerts currently logged.")
 else:
-    # Use an alert box style for alerts
     for index, row in alert_data.iterrows():
         st.warning(f"🚨 Reorder needed for **{row['product_name']}** (Alert Date: {row['alert_date']})")
