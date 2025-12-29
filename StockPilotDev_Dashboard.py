@@ -7,9 +7,9 @@ from streamlit.web.server import Server as StreamlitServer
 
 # --- SHOPIFY API CONFIGURATION ---
 # !! REPLACE THESE PLACEHOLDER VALUES WITH YOUR ACTUAL CREDENTIALS !!
-SHOPIFY_SHOP_URL = "stockpilotdev.myshopify.com"
-SHOPIFY_API_KEY = "f2b14664e55eba76e5d2aefae8903b21"
-SHOPIFY_API_PASSWORD = "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"
+SHOPIFY_SHOP_URL = "your-shop-name.myshopify.com"
+SHOPIFY_API_KEY = "YOUR_API_KEY"
+SHOPIFY_API_PASSWORD = "YOUR_API_PASSWORD"
 
 
 # --- FUNCTION DEFINITIONS ---
@@ -134,19 +134,16 @@ def fetch_inventory_levels_from_shopify(product_titles):
 
         # Iterate through product titles to find inventory levels
         for title in product_titles:
-            products_search_result = shopify.Product.find(title=title)
-            if products_search_result:
-                # FIX: Access the first product object from the potential collection/list
-                if isinstance(products_search_result, shopify.PaginatedCollection) or isinstance(products_search_result,
-                                                                                                 list):
-                    product = products_search_result[0]
-                else:
-                    product = products_search_result
+            # FIX: The find() method returns a collection, so we access the first product
+            products_collection = shopify.Product.find(title=title)
 
+            if products_collection and hasattr(products_collection, 'variants'):
+                product = products_collection
                 # Then find inventory levels for associated inventory item IDs
                 for variant in product.variants:
                     inv_levels = shopify.InventoryLevel.find(inventory_item_ids=variant.inventory_item_id)
                     for level in inv_levels:
+                        # Assuming single location for simplicity
                         inventory_levels[title] = level.available
                         break
                     if title in inventory_levels:
@@ -171,7 +168,7 @@ if 'client_data' not in st.session_state:
 if 'stock_levels' not in st.session_state:
     st.session_state['stock_levels'] = {}
 if 'full_results' not in st.session_state:
-    st.session_state['full_results'] = pd.DataFrame()  # New session state for analysis results
+    st.session_state['full_results'] = pd.DataFrame()
 
 create_database()
 
@@ -179,7 +176,7 @@ create_database()
 with st.sidebar:
     st.subheader("Data Input & Analysis")
 
-    # Option 1: Fetch data via Shopify API (now runs full analysis automatically)
+    # Option 1: Fetch data via Shopify API (runs full analysis automatically)
     if st.button("Fetch Latest Data from Shopify API"):
         client_data_df = fetch_sales_data_from_shopify()
         if client_data_df is not None and not client_data_df.empty:
@@ -189,7 +186,7 @@ with st.sidebar:
             current_stock_levels = fetch_inventory_levels_from_shopify(product_titles)
             st.session_state['stock_levels'] = current_stock_levels
 
-            # --- NEW: Run analysis automatically here ---
+            # --- Run analysis automatically here ---
             st.session_state['full_results'] = analyze_data_and_generate_alerts(client_data_df, current_stock_levels)
 
         elif client_data_df is not None and client_data_df.empty:
