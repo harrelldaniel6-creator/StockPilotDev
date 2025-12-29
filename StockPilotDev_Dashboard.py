@@ -2,14 +2,14 @@ import streamlit as st
 import pandas as pd
 import sqlite3
 import os
-import shopify  # Make sure to import the new library
-from streamlit.web.server import Server as StreamlitServer  # Required for Gunicorn compatibility
+import shopify
+from streamlit.web.server import Server as StreamlitServer
 
 # --- SHOPIFY API CONFIGURATION ---
 # !! REPLACE THESE PLACEHOLDER VALUES WITH YOUR ACTUAL CREDENTIALS !!
-SHOPIFY_SHOP_URL = "stockpilotdev.myshopify.com"
-SHOPIFY_API_KEY = "f2b14664e55eba76e5d2aefae8903b21"
-SHOPIFY_API_PASSWORD = "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"
+SHOPIFY_SHOP_URL = "your-shop-name.myshopify.com"
+SHOPIFY_API_KEY = "YOUR_API_KEY"
+SHOPIFY_API_PASSWORD = "YOUR_API_PASSWORD"
 
 
 # --- FUNCTION DEFINITIONS ---
@@ -96,7 +96,6 @@ def analyze_data_and_generate_alerts(sales_data_df, current_stock_levels):
 
 def fetch_sales_data_from_shopify():
     """Fetches recent orders from Shopify API and returns a pandas DataFrame."""
-    # ... (function body is the same as before) ...
     try:
         # Establish connection session
         api_url = f"https://{SHOPIFY_API_KEY}:{SHOPIFY_API_PASSWORD}@{SHOPIFY_SHOP_URL}/admin"
@@ -126,7 +125,6 @@ def fetch_sales_data_from_shopify():
 
 def fetch_inventory_levels_from_shopify(product_titles):
     """Fetches current inventory levels for specified products from Shopify API."""
-    # ... (function body is the same as before) ...
     try:
         api_url = f"https://{SHOPIFY_API_KEY}:{SHOPIFY_API_PASSWORD}@{SHOPIFY_SHOP_URL}/admin"
         shopify.ShopifyResource.set_site(api_url)
@@ -134,10 +132,18 @@ def fetch_inventory_levels_from_shopify(product_titles):
         st.info("Fetching current inventory levels from Shopify API...")
         inventory_levels = {}
 
+        # Iterate through product titles to find inventory levels
         for title in product_titles:
-            products = shopify.Product.find(title=title)
-            if products:
-                product = products
+            products_search_result = shopify.Product.find(title=title)
+            if products_search_result:
+                # FIX: Access the first product object from the potential collection/list
+                if isinstance(products_search_result, shopify.PaginatedCollection) or isinstance(products_search_result,
+                                                                                                 list):
+                    product = products_search_result[0]
+                else:
+                    product = products_search_result
+
+                # Then find inventory levels for associated inventory item IDs
                 for variant in product.variants:
                     inv_levels = shopify.InventoryLevel.find(inventory_item_ids=variant.inventory_item_id)
                     for level in inv_levels:
@@ -212,7 +218,6 @@ if not st.session_state['client_data'].empty:
     # --- Option to manually run analysis (moved outside sidebar) ---
     st.subheader("Run Manual Analysis (Optional)")
     with st.form("stock_level_form"):
-        # ... (stock level inputs form code is the same as before, uses fetched defaults) ...
         unique_products = st.session_state['client_data']['Item Type'].unique()
         stock_inputs = {}
         cols = st.columns(3)
