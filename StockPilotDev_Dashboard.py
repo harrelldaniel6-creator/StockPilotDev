@@ -23,6 +23,11 @@ def get_reorder_alerts():
     return alert_data
 
 
+def convert_df_to_csv(df):
+    """Converts a DataFrame to a CSV string for download."""
+    return df.to_csv(index=False).encode('utf-8')
+
+
 def create_database():
     """Creates the database and necessary tables if they don't exist."""
     conn = sqlite3.connect('stockpilot.db')
@@ -132,18 +137,14 @@ def fetch_inventory_levels_from_shopify(product_titles):
         st.info("Fetching current inventory levels from Shopify API...")
         inventory_levels = {}
 
-        # Iterate through product titles to find inventory levels
         for title in product_titles:
-            # FIX: The find() method returns a collection, so we access the first product
             products_collection = shopify.Product.find(title=title)
 
             if products_collection and hasattr(products_collection, 'variants'):
                 product = products_collection
-                # Then find inventory levels for associated inventory item IDs
                 for variant in product.variants:
                     inv_levels = shopify.InventoryLevel.find(inventory_item_ids=variant.inventory_item_id)
                     for level in inv_levels:
-                        # Assuming single location for simplicity
                         inventory_levels[title] = level.available
                         break
                     if title in inventory_levels:
@@ -162,7 +163,6 @@ def fetch_inventory_levels_from_shopify(product_titles):
 st.set_page_config(page_title="StockPilot Dashboard", layout="wide")
 st.title("StockPilot Re-Order Alerts Dashboard")
 
-# Initialize session state for data storage if it doesn't exist
 if 'client_data' not in st.session_state:
     st.session_state['client_data'] = pd.DataFrame()
 if 'stock_levels' not in st.session_state:
@@ -181,14 +181,10 @@ with st.sidebar:
         client_data_df = fetch_sales_data_from_shopify()
         if client_data_df is not None and not client_data_df.empty:
             st.session_state['client_data'] = client_data_df
-            # Automatically fetch inventory levels after sales data is loaded
             product_titles = client_data_df['Item Type'].unique()
             current_stock_levels = fetch_inventory_levels_from_shopify(product_titles)
             st.session_state['stock_levels'] = current_stock_levels
-
-            # --- Run analysis automatically here ---
             st.session_state['full_results'] = analyze_data_and_generate_alerts(client_data_df, current_stock_levels)
-
         elif client_data_df is not None and client_data_df.empty:
             st.warning("No sales data found for analysis.")
             st.session_state['client_data'] = pd.DataFrame()
@@ -201,18 +197,31 @@ with st.sidebar:
         try:
             client_data_df = pd.read_csv(uploaded_file)
             st.session_state['client_data'] = client_data_df
-            st.session_state['stock_levels'] = {}  # Clear API stock levels if using CSV
-            st.session_state['full_results'] = pd.DataFrame()  # Clear old results
+            st.session_state['stock_levels'] = {}
+            st.session_state['full_results'] = pd.DataFrame()
             st.success("CSV file uploaded successfully.")
         except Exception as e:
             st.error(f"An error occurred during file processing: {e}")
 
+    st.markdown("---")  # Add another separator line
+
+    # --- NEW: Export Alerts to CSV Button ---
+    alert_data_for_export = get_reorder_alerts()
+    csv = convert_df_to_csv(alert_data_for_export)
+
+    st.download_button(
+        label="Download Re-Order Alerts (CSV)",
+        data=csv,
+        file_name='stockpilot_reorder_alerts.csv',
+        mime='text/csv',
+        disabled=alert_data_for_export.empty,  # Disable button if no alerts exist
+        help="Click to download a CSV spreadsheet of the current alerts."
+    )
+
 # --- MAIN APPLICATION LOGIC ---
 
-# Check if data exists in session state before proceeding with the manual form/results display
 if not st.session_state['client_data'].empty:
 
-    # --- Option to manually run analysis (moved outside sidebar) ---
     st.subheader("Run Manual Analysis (Optional)")
     with st.form("stock_level_form"):
         unique_products = st.session_state['client_data']['Item Type'].unique()
@@ -227,11 +236,9 @@ if not st.session_state['client_data'].empty:
         submitted = st.form_submit_button("Run Analysis and Generate Alerts Manually")
 
         if submitted:
-            # Call the analysis function and capture the detailed results
             st.session_state['full_results'] = analyze_data_and_generate_alerts(st.session_state['client_data'],
                                                                                 stock_inputs)
 
-    # Display the full results if they exist in session state
     if not st.session_state['full_results'].empty:
         with st.container():
             st.subheader("Full Inventory Analysis Results")
