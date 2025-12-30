@@ -7,7 +7,8 @@ import numpy as np
 import random
 
 # --- CONFIGURATION ---
-LABOR_FILE_PATH = 'C:/StockPilotSafe/Excel Files/Labor_Raw_Data.csv'
+LABOR_FILE_PATH = 'data/Labor_Raw_Data.csv'
+SHOPIFY_SALES_FILE_PATH = 'data/Shopify_Sales_Data.csv'
 TARGET_PRIME_COST = 55.0
 
 
