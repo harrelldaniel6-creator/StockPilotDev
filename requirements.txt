@@ -45,3 +45,4 @@ streamlit
 pandas
 ShopifyAPI
 gunicorn
+plotly
