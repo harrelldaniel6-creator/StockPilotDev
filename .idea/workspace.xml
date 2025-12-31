@@ -5,14 +5,8 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="883ca3d8-af8a-4d91-a0b9-d8ae0629379d" name="Changes" comment="">
-      <change beforePath="$PROJECT_DIR$/.idea/.name" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/.name" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/PycharmProjects/setup_database/requirements.txt" beforeDir="false" afterPath="$PROJECT_DIR$/PycharmProjects/setup_database/requirements.txt" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/StockPilotDev_Dashboard_Final.py" beforeDir="false" afterPath="$PROJECT_DIR$/StockPilotDev_Dashboard_Final.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/create_test_alert.py" beforeDir="false" afterPath="$PROJECT_DIR$/create_test_alert.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/inventory_checker.py" beforeDir="false" afterPath="$PROJECT_DIR$/inventory_checker.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/inventory_dashboard.py" beforeDir="false" afterPath="$PROJECT_DIR$/inventory_dashboard.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/labor_analytics.py" beforeDir="false" afterPath="$PROJECT_DIR$/labor_analytics.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/stockpilot.db" beforeDir="false" afterPath="$PROJECT_DIR$/stockpilot.db" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -173,7 +167,7 @@
       <workItem from="1767061118165" duration="7000" />
       <workItem from="1767061166760" duration="3427000" />
       <workItem from="1767064633950" duration="5123000" />
-      <workItem from="1767087975850" duration="5166000" />
+      <workItem from="1767087975850" duration="12892000" />
     </task>
     <servers />
   </component>
@@ -194,7 +188,7 @@
   <component name="com.intellij.coverage.CoverageDataManagerImpl">
     <SUITE FILE_PATH="coverage/StockPilotDev_Dashboard_py$labor_analytics.coverage" NAME="labor_analytics Coverage Results" MODIFIED="1767025984422" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
     <SUITE FILE_PATH="coverage/stockpilot_db$StockPilotDev_Dashboard.coverage" NAME="StockPilotDev_Dashboard_Final Coverage Results" MODIFIED="1767087922925" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
-    <SUITE FILE_PATH="coverage/stockpilot_db$StockPilotDev_Dashboard_Final.coverage" NAME="StockPilotDev_Dashboard_Final Coverage Results" MODIFIED="1767094911566" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+    <SUITE FILE_PATH="coverage/stockpilot_db$StockPilotDev_Dashboard_Final.coverage" NAME="StockPilotDev_Dashboard_Final Coverage Results" MODIFIED="1767163974330" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
     <SUITE FILE_PATH="coverage/stockpilot_db$inventory_dashboard.coverage" NAME="inventory_dashboard Coverage Results" MODIFIED="1767088576865" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
     <SUITE FILE_PATH="coverage/StockPilotDev_Dashboard_py$create_test_alert.coverage" NAME="create_test_alert Coverage Results" MODIFIED="1767060949693" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
     <SUITE FILE_PATH="coverage/StockPilotDev_Dashboard_py$StockPilotDev_Dashboard.coverage" NAME="StockPilotDev_Dashboard Coverage Results" MODIFIED="1767060926444" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
