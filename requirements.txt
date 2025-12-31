@@ -43,3 +43,4 @@ pandas
 ShopifyAPI
 plotly
 setuptools==58.0.0
+dash
