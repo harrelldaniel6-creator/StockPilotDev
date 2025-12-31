@@ -25,13 +25,10 @@ def parse_contents(contents, filename):
             df = pd.read_excel(io.BytesIO(decoded))
     except Exception as e:
         print(f"Error processing file: {e}")
-        # Return an error message to the user interface
         return html.Div(['There was an error processing this file.'], style={'color': 'red'})
 
     if df is not None:
         # Convert dataframe to a JSON string for storage in dcc.Store
-        # Note: If this function returns a Dash html component (like Div above), it cannot be stored in dcc.Store
-        # So ensure you handle the error appropriately in the calling callback.
         return df.to_json(date_format='iso', orient='split')
     return None
 
@@ -75,8 +72,7 @@ app.layout = html.Div([
 def update_store(contents, filename):
     if contents is not None:
         data_json = parse_contents(contents, filename)
-        # Ensure that if an error message html.Div is returned, we handle it and don't store it
-        if isinstance(data_json, str):
+        if isinstance(data_json, str):  # Check if it's JSON data (not an error Div)
             return data_json
     return None
 
@@ -86,7 +82,6 @@ def update_store(contents, filename):
               Input('stored-data', 'data'))
 def update_status(data):
     if data is not None:
-        # Use a temporary read to get row/column counts for the status message
         df = pd.read_json(data, orient='split')
         return html.Div([f"Successfully loaded data with {len(df.columns)} columns and {len(df)} rows."])
     return html.Div(["Awaiting file upload..."])
@@ -97,18 +92,16 @@ def update_status(data):
               Input('stored-data', 'data'))
 def update_graph(data):
     if data is None:
-        # Return an empty figure if no data is loaded yet
         return go.Figure(layout=go.Layout(title="Upload data to see graph"))
 
     df = pd.read_json(data, orient='split')
 
-    # This is where your custom business analysis goes.
-    # We will assume a simple line graph using the first two columns of the uploaded data for testing.
+    # This assumes your data has at least two columns. It will plot the first two by default.
     if len(df.columns) >= 2:
         x_col = df.columns[0]
         y_col = df.columns[1]
         fig = go.Figure(data=[go.Scatter(x=df[x_col], y=df[y_col], mode='lines+markers')])
-        fig.update_layout(title=f'Analysis of {y_col} over {x_col}',
+        fig.update_layout(title=f'Analysis: {y_col} vs {x_col}',
                           xaxis_title=x_col,
                           yaxis_title=y_col)
         return fig
@@ -119,4 +112,4 @@ def update_graph(data):
 # --- Run the application locally ---
 if __name__ == '__main__':
     # Running locally for testing
-    app.run_server(debug=True)
+    app.run(debug=True)
