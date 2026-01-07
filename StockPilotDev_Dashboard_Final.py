@@ -16,13 +16,8 @@ def parse_contents(contents, filename):
     content_type, content_string = contents.split(',')
     decoded = base64.b64decode(content_string)
     try:
-        if 'csv' in filename:
-            df = pd.read_csv(io.StringIO(decoded.decode('utf-8')))
-        elif 'xls' in filename:
-            df = pd.read_excel(io.BytesIO(decoded))
-        else:
-            return None
-
+        df = pd.read_csv(io.StringIO(decoded.decode('utf-8'))) if 'csv' in filename else pd.read_excel(
+            io.BytesIO(decoded))
         for col in df.columns:
             if df[col].dtype == 'object':
                 try:
@@ -31,299 +26,268 @@ def parse_contents(contents, filename):
                 except:
                     pass
         return df.to_json(date_format='iso', orient='split')
-    except Exception:
+    except:
         return None
 
 
 def safe_load_df(json_data):
     if not json_data: return pd.DataFrame()
     df = pd.read_json(io.StringIO(json_data), orient='split')
-    for col in df.columns:
-        if any(keyword in col.lower() for keyword in ['date', 'time', 'start', 'end']):
-            df[col] = pd.to_datetime(df[col], errors='coerce')
+    dt_cols = df.select_dtypes(include=['datetime64']).columns
+    if not dt_cols.empty and 'Date' not in df.columns: df['Date'] = df[dt_cols]
+    if 'Date' in df.columns: df['Date'] = pd.to_datetime(df['Date'])
     return df
 
 
 def append_data(existing_json, new_json):
     if not existing_json: return new_json
-    existing_df, new_df = safe_load_df(existing_json), safe_load_df(new_json)
-    return pd.concat([existing_df, new_df], axis=0, ignore_index=True).to_json(date_format='iso', orient='split')
+    return pd.concat([safe_load_df(existing_json), safe_load_df(new_json)], axis=0, ignore_index=True).to_json(
+        date_format='iso', orient='split')
 
 
 def distribute_wages_hourly(df, wage_col, start_col, end_col):
-    if df.empty or wage_col not in df.columns or start_col not in df.columns or end_col not in df.columns:
-        return pd.DataFrame()
+    if df.empty or not all(c in df.columns for c in [wage_col, start_col, end_col]): return pd.DataFrame()
     df = df.copy()
     df[start_col] = pd.to_datetime(df[start_col], errors='coerce')
     df[end_col] = pd.to_datetime(df[end_col], errors='coerce')
+    df = df.dropna(subset=[start_col, end_col])
     df[wage_col] = pd.to_numeric(df[wage_col].astype(str).str.replace('[$,]', '', regex=True), errors='coerce').fillna(
         0)
-    df.dropna(subset=[start_col, end_col, wage_col], inplace=True)
-    df = df[df[start_col] < df[end_col]]
-
-    # DEBUGGING: Check data after initial cleaning but before distribution
-    print(f"\nDistribute Wages Input rows remaining: {len(df)}")
-    if df.empty: return pd.DataFrame()
 
     hourly_costs = []
     for _, row in df.iterrows():
         start, end, total_wage = row[start_col], row[end_col], row[wage_col]
-        duration_minutes = (end - start).total_seconds() / 60
-        if duration_minutes <= 0: continue
-        wage_per_minute = total_wage / duration_minutes
-        current_time = start
-        while current_time < end:
-            next_hour = current_time.replace(minute=0, second=0, microsecond=0) + pd.Timedelta(hours=1)
-            time_until_end_of_hour = min(next_hour, end) - current_time
-            minutes_in_segment = time_until_end_of_hour.total_seconds() / 60
-            cost_for_segment = minutes_in_segment * wage_per_minute
-            hourly_costs.append({'Hour': current_time.hour, 'Spent': cost_for_segment})
-            current_time = next_hour
-    result_df = pd.DataFrame(hourly_costs)
-    return result_df.groupby('Hour')['Spent'].sum().reset_index() if not result_df.empty else result_df
+        duration = (end - start).total_seconds() / 3600
+        if duration <= 0: continue
+        wage_per_h = total_wage / duration
+        curr = start
+        while curr < end:
+            next_h = curr.replace(minute=0, second=0, microsecond=0) + pd.Timedelta(hours=1)
+            seg_end = min(next_h, end)
+            hourly_costs.append({'Hour': curr.hour, 'Spent': (seg_end - curr).total_seconds() / 3600 * wage_per_h})
+            curr = next_h
+    res = pd.DataFrame(hourly_costs)
+    return res.groupby('Hour')['Spent'].sum().reset_index() if not res.empty else res
 
 
 # --- 3. App Layout ---
 app.layout = html.Div([
     html.Div([
         html.H1("StockPilotDev: Integrated Strategy Suite (v3.9)", style={'color': '#ffffff', 'margin': '0'}),
-        html.P("2026 Multi-File Intelligence | Precision Metrics", style={'color': '#e0e0e0'})
+        html.P("2026 SMB Command Center | Financial & Labor Precision", style={'color': '#e0e0e0'})
     ], style={'backgroundColor': '#2c3e50', 'padding': '20px', 'textAlign': 'center'}),
 
     html.Div([
         dcc.Upload(id='upload-data', children=html.Div(['Drag & Drop Files']), style={
-            'width': '70%', 'height': '60px', 'lineHeight': '30px', 'borderWidth': '2px', 'borderStyle': 'dashed',
+            'width': '65%', 'height': '60px', 'lineHeight': '30px', 'borderWidth': '2px', 'borderStyle': 'dashed',
             'borderRadius': '10px', 'textAlign': 'center', 'backgroundColor': '#fff'
         }, multiple=True),
-        html.Button("Reset Session", id="reset-btn", style={
-            'backgroundColor': '#dc3545', 'color': 'white', 'border': 'none', 'padding': '10px 20px',
-            'borderRadius': '5px', 'marginLeft': '20px'})
+        html.Button("Reset Session", id="reset-btn",
+                    style={'backgroundColor': '#dc3545', 'color': 'white', 'padding': '10px 20px',
+                           'borderRadius': '5px', 'marginLeft': '20px'})
     ], style={'display': 'flex', 'alignItems': 'center', 'justifyContent': 'center', 'margin': '20px'}),
 
-    html.Div(id='upload-status', style={'textAlign': 'center', 'marginBottom': '20px'}),
     dcc.Store(id='stored-labor-data', storage_type='session'),
     dcc.Store(id='stored-sales-data', storage_type='session'),
-    dcc.Store(id='stored-inventory-data', storage_type='session'),
 
     html.Div([
-        html.Div(id='summary-stats', style={'display': 'flex', 'justifyContent': 'space-around', 'padding': '15px',
-                                            'backgroundColor': '#ffffff', 'borderRadius': '8px',
-                                            'boxShadow': '0 4px 6px rgba(0,0,0,0.1)'}),
-        html.Div([html.Label("Global Date Range:", style={'fontWeight': 'bold'}),
-                  dcc.DatePickerRange(id='date-picker-range')], style={'marginTop': '20px'})
-    ], style={'maxWidth': '1200px', 'margin': '0 auto'}),
-
-    # SECTION: Sales
-    html.Div([
-        html.H2("📈 2026 Sales Strategy Map", style={'color': '#28a745'}),
+        # PILLAR 1: SALES INTELLIGENCE
         html.Div([
-            html.Div([html.Label("Revenue Col:"), dcc.Dropdown(id='sales-col')], style={'flex': '1'}),
-            html.Div([html.Label("Grouping:"), dcc.Dropdown(id='cust-col')], style={'flex': '1'}),
-            html.Div([html.Label("Target %:"), dcc.Input(id='growth-target', type='number', value=12)],
-                     style={'flex': '0.5'}),
-        ], style={'display': 'flex', 'gap': '20px'}),
-        html.Div(id='sales-metrics-cards',
-                 style={'display': 'flex', 'justifyContent': 'space-between', 'padding': '15px'}),
-        dcc.Graph(id='sales-forecast-graph')
-    ], style={'padding': '20px', 'margin': '20px auto', 'maxWidth': '1200px', 'border': '1px solid #28a745',
-              'borderRadius': '10px'}),
+            html.H2("📈 2026 Sales & Health Dashboard", style={'color': '#28a745'}),
+            html.Div([
+                html.Div([html.Label("Revenue Col:"), dcc.Dropdown(id='sales-col')], style={'flex': '1'}),
+                html.Div([html.Label("Cust ID Col:"), dcc.Dropdown(id='cust-col')], style={'flex': '1'}),
+                html.Div([html.Label("Est. COGS %:"), dcc.Input(id='cogs-pct', type='number', value=30)],
+                         style={'flex': '0.5'}),
+                html.Div([html.Label("Monthly Target:"), dcc.Input(id='fixed-costs', type='number', value=5000)],
+                         style={'flex': '0.7'}),
+            ], style={'display': 'flex', 'gap': '20px', 'marginBottom': '10px'}),
 
-    # SECTION: Labor
-    html.Div([
-        html.H2("👥 Labor Intelligence", style={'color': '#007bff'}),
+            html.Div(id='topline-stats', style={'display': 'flex', 'gap': '10px', 'marginBottom': '15px'}),
+            html.Div(id='sales-kpi-cards'),
+            dcc.Graph(id='sales-trend-graph'),
+            html.Div([html.Label("Trend Smoothing:"), dcc.Slider(id='forecast-span', min=1, max=6, value=3)],
+                     style={'marginTop': '10px'})
+        ], style={'padding': '20px', 'marginBottom': '20px', 'border': '1px solid #28a745', 'borderRadius': '10px',
+                  'backgroundColor': '#fff'}),
+
+        # PILLAR 2: LABOR INTELLIGENCE
         html.Div([
-            html.Div([html.Label("Wage Col:"), dcc.Dropdown(id='wage-col')], style={'flex': '1'}),
-            html.Div([html.Label("Hours Col:"), dcc.Dropdown(id='hours-col')], style={'flex': '1'}),
-            html.Div([html.Label("Group By:"), dcc.Dropdown(id='groupby-col')], style={'flex': '1'}),
-        ], style={'display': 'flex', 'gap': '20px'}),
-        html.Div([html.Button("Download Report", id="btn-download-labor"), dcc.Download(id="download-labor-csv")],
-                 style={'textAlign': 'right', 'marginTop': '10px'}),
-        html.Div(id='labor-metrics-cards', style={'marginTop': '10px'}),
-        dcc.Graph(id='hourly-labor-graph'),
-        html.Div(id='labor-detail-table', style={'marginTop': '10px'})
-    ], style={'padding': '20px', 'margin': '20px auto', 'maxWidth': '1200px', 'border': '1px solid #007bff',
-              'borderRadius': '10px'}),
-
-    # SECTION: Inventory
-    html.Div([
-        html.H2("📦 Inventory Intelligence", style={'color': '#dc3545'}),
-        html.Div([
-            html.Div([html.Label("Stock Col:"), dcc.Dropdown(id='inv-stock-col')], style={'flex': '1'}),
-            html.Div([html.Label("Name Col:"), dcc.Dropdown(id='inv-name-col')], style={'flex': '1'}),
-            html.Div([html.Label("Reorder Pt:"), dcc.Input(id='reorder-threshold', type='number', value=20)],
-                     style={'flex': '0.5'}),
-        ], style={'display': 'flex', 'gap': '20px'}),
-        html.Div(id='inventory-metrics-cards', style={'display': 'flex', 'gap': '20px', 'marginTop': '10px'}),
-        dcc.Graph(id='inventory-status-graph')
-    ], style={'padding': '20px', 'margin': '20px auto', 'maxWidth': '1200px', 'border': '1px solid #dc3545',
-              'borderRadius': '10px'}),
-], style={'fontFamily': 'Segoe UI, sans-serif', 'backgroundColor': '#f4f4f9'})
+            html.H2("👥 Labor Productivity & Cost Distribution", style={'color': '#007bff'}),
+            html.Div([
+                html.Div([html.Label("Wage Col:"), dcc.Dropdown(id='wage-col')], style={'flex': '1'}),
+                html.Div([html.Label("Start Time:"), dcc.Dropdown(id='start-col')], style={'flex': '1'}),
+                html.Div([html.Label("End Time:"), dcc.Dropdown(id='end-col')], style={'flex': '1'}),
+            ], style={'display': 'flex', 'gap': '20px'}),
+            dcc.Graph(id='labor-hourly-precision-graph'),
+        ], style={'padding': '20px', 'border': '1px solid #007bff', 'borderRadius': '10px', 'backgroundColor': '#fff'}),
+    ], style={'maxWidth': '1200px', 'margin': '0 auto'})
+], style={'fontFamily': 'Segoe UI, sans-serif', 'backgroundColor': '#f4f4f9', 'paddingBottom': '50px'})
 
 
-# --- 4. Callbacks ---
+# --- 4. Callbacks (Part 2: Visual Intelligence & 7-Day Sales Avg) ---
+
 @app.callback(
-    [Output('stored-labor-data', 'data'), Output('stored-sales-data', 'data'), Output('stored-inventory-data', 'data'),
-     Output('upload-status', 'children')],
+    [Output('stored-labor-data', 'data'), Output('stored-sales-data', 'data')],
     [Input('upload-data', 'contents'), Input('reset-btn', 'n_clicks')],
-    [State('upload-data', 'filename'), State('stored-labor-data', 'data'), State('stored-sales-data', 'data'),
-     State('stored-inventory-data', 'data')],
+    [State('upload-data', 'filename'), State('stored-labor-data', 'data'), State('stored-sales-data', 'data')],
     prevent_initial_call=True
 )
-def handle_uploads(contents, reset, names, labor, sales, inv):
-    if callback_context.triggered_id == 'reset-btn': return None, None, None, html.Div("Session Reset",
-                                                                                       style={'color': 'red'})
+def handle_uploads(contents, reset, names, labor, sales):
+    if callback_context.triggered_id == 'reset-btn': return None, None
     if not contents: raise exceptions.PreventUpdate
-    files = []
     for c, n in zip(contents, names):
         js = parse_contents(c, n)
         if js:
-            fn = n.lower()
-            if any(k in fn for k in ['labor', 'wage', 'hour']):
-                labor = append_data(labor, js);
-                files.append(f"👥 Labor: {n}")
-            elif any(k in fn for k in ['sale', 'rev']):
-                sales = append_data(sales, js);
-                files.append(f"📈 Sales: {n}")
-            elif any(k in fn for k in ['inv', 'stock']):
-                inv = append_data(inv, js);
-                files.append(f"📦 Inventory: {n}")
+            if any(k in n.lower() for k in ['labor', 'wage']):
+                labor = append_data(labor, js)
             else:
-                sales = append_data(sales, js);
-                files.append(f"📈 Misc: {n}")
-    return labor, sales, inv, html.Div(" | ".join(files), style={'color': '#28a745', 'fontWeight': 'bold'})
+                sales = append_data(sales, js)
+    return labor, sales
 
 
 @app.callback(
-    [Output('sales-col', 'options'), Output('sales-col', 'value'), Output('cust-col', 'options'),
-     Output('cust-col', 'value'),
-     Output('hours-col', 'options'), Output('hours-col', 'value'), Output('wage-col', 'options'),
-     Output('wage-col', 'value'),
-     Output('groupby-col', 'options'), Output('groupby-col', 'value'), Output('inv-stock-col', 'options'),
-     Output('inv-stock-col', 'value'),
-     Output('inv-name-col', 'options'), Output('inv-name-col', 'value'), Output('date-picker-range', 'start_date'),
-     Output('date-picker-range', 'end_date')],
-    [Input('stored-labor-data', 'data'), Input('stored-sales-data', 'data'), Input('stored-inventory-data', 'data')],
-    [State('sales-col', 'value'), State('cust-col', 'value'), State('hours-col', 'value'), State('wage-col', 'value')]
+    [Output('sales-col', 'options'), Output('cust-col', 'options'),
+     Output('wage-col', 'options'), Output('start-col', 'options'), Output('end-col', 'options')],
+    [Input('stored-sales-data', 'data'), Input('stored-labor-data', 'data')]
 )
-def sync_ui(labor, sales, inv, s_val, c_val, h_val, w_val):
-    dfs = [safe_load_df(d) for d in [labor, sales, inv] if d]
-    if not dfs: return [[] if i % 2 == 0 else None for i in range(14)] + [None, None]
-    combined = pd.concat(dfs, axis=0, ignore_index=True)
-    opts = [{'label': c, 'value': c} for c in combined.columns]
-
-    def check(v): return v if v in combined.columns else (combined.columns if not combined.empty else None)
-
-    dt_cols = combined.select_dtypes(include=['datetime64']).columns
-    start, end = (combined[dt_cols].min().min(), combined[dt_cols].max().max()) if not dt_cols.empty else (None, None)
-    return [opts, check(s_val), opts, check(c_val), opts, check(h_val), opts, check(w_val), opts, None, opts, None,
-            opts, None, start, end]
+def sync_dropdowns(s_js, l_js):
+    s_df, l_df = safe_load_df(s_js), safe_load_df(l_js)
+    s_opts = [{'label': c, 'value': c} for c in s_df.columns]
+    l_opts = [{'label': c, 'value': c} for c in l_df.columns]
+    return s_opts, s_opts, l_opts, l_opts, l_opts
 
 
 @app.callback(
-    [Output('sales-metrics-cards', 'children'), Output('sales-forecast-graph', 'figure')],
-    [Input('stored-sales-data', 'data'), Input('sales-col', 'value'), Input('cust-col', 'value'),
-     Input('growth-target', 'value'),
-     Input('stored-labor-data', 'data'), Input('hours-col', 'value'), Input('date-picker-range', 'start_date'),
-     Input('date-picker-range', 'end_date')]
+    [Output('topline-stats', 'children'), Output('sales-kpi-cards', 'children'), Output('sales-trend-graph', 'figure')],
+    [Input('stored-sales-data', 'data'), Input('sales-col', 'value'),
+     Input('cust-col', 'value'), Input('forecast-span', 'value'),
+     Input('fixed-costs', 'value'), Input('cogs-pct', 'value')]
 )
-def update_sales_view(s_js, rev, grp, growth, l_js, h_col, start_date, end_date):
-    df_sales, df_labor = safe_load_df(s_js), safe_load_df(l_js)
-
-    # FIX 1: Filter sales data by global date range
-    if start_date and end_date and not df_sales.empty and 'Date' in df_sales.columns:
-        df_sales['Date'] = pd.to_datetime(df_sales['Date'])
-        df_sales = df_sales[(df_sales['Date'] >= start_date) & (df_sales['Date'] <= end_date)]
-
-    # FIX 2: Check if selected columns exist in current dataframe to prevent KeyError
-    if df_sales.empty or not rev or rev not in df_sales.columns or not grp or grp not in df_sales.columns:
-        return "Configure Columns Above/Adjust Date Range", go.Figure()
-
-    df_sales[rev] = pd.to_numeric(df_sales[rev].astype(str).str.replace('[$,]', '', regex=True),
-                                  errors='coerce').fillna(0)
-    total_sales = df_sales[rev].sum()
-    forecast = total_sales * (1 + (float(growth or 0) / 100))
-
-    sales_per_hour = 0
-    if not df_labor.empty and h_col in df_labor.columns:
-        # Filter labor data by the same global date range for calculation consistency
-        if start_date and end_date and 'Date' in df_labor.columns:
-            df_labor['Date'] = pd.to_datetime(df_labor['Date'])
-            df_labor = df_labor[(df_labor['Date'] >= start_date) & (df_labor['Date'] <= end_date)]
-
-        hr_sum = pd.to_numeric(df_labor[h_col], errors='coerce').sum()
-        if hr_sum > 0: sales_per_hour = total_sales / hr_sum
-
-    metrics = [html.B(f"Total Rev: ${total_sales:,.0f}"), html.B(f"2026 Forecast: ${forecast:,.0f}"),
-               html.B(f"Sales/Hr: ${sales_per_hour:,.2f}")]
-    grouped = df_sales.groupby(grp)[rev].agg(Revenue='sum').reset_index().nlargest(15, 'Revenue')
-    fig = px.bar(grouped, x=grp, y='Revenue', text_auto='.2s', template="plotly_white")
-    fig.update_traces(marker_color='#28a745', textposition='outside')
-    return metrics, fig
-
-
-@app.callback(
-    [Output('labor-metrics-cards', 'children'), Output('hourly-labor-graph', 'figure'),
-     Output('labor-detail-table', 'children'), Output('download-labor-csv', 'data')],
-    [Input('stored-labor-data', 'data'), Input('stored-sales-data', 'data'), Input('wage-col', 'value'),
-     Input('sales-col', 'value'), Input('btn-download-labor', 'n_clicks'),
-     Input('date-picker-range', 'start_date'), Input('date-picker-range', 'end_date')]  # Added date range inputs
-)
-def update_labor_metrics_and_graph(l_js, s_js, w_col, r_col, n, start_date, end_date):
-    l_df = safe_load_df(l_js)
-
-    # FIX 3: Filter labor data by global date range before any processing
-    if start_date and end_date and not l_df.empty and 'Date' in l_df.columns:
-        l_df['Date'] = pd.to_datetime(l_df['Date'])
-        l_df = l_df[(l_df['Date'] >= start_date) & (l_df['Date'] <= end_date)]
-
-    if l_df.empty or not w_col or w_col not in l_df.columns:
-        return html.Div("Upload Labor Data/Adjust Date Range"), go.Figure(), html.Div(), None
-
-    # We assume 'Shift Start' and 'Shift End' are the column names for the detailed analysis
-    hourly_spend_df = distribute_wages_hourly(l_df, w_col, 'Start Time', 'End Time')
-
-    # DEBUGGING: Print result of hourly distribution
-    print(f"Hourly spend DF length after filtering/distribution: {len(hourly_spend_df)}")
-
-    fig = go.Figure()
-    metrics_ui = html.Div(
-        f"Total Labor: ${pd.to_numeric(l_df[w_col].astype(str).str.replace('[$,]', '', regex=True), errors='coerce').sum():,.2f}")
-
-    if not hourly_spend_df.empty:
-        target_hours_int = list(range(9, 24)) + list(range(0, 4))
-        hourly_spend_df = hourly_spend_df[hourly_spend_df['Hour'].isin(target_hours_int)]
-        top_3_hours = hourly_spend_df.nlargest(3, 'Spent')['Hour'].tolist()
-        colors = ['#f8d7da' if hour in top_3_hours else '#007bff' for hour in hourly_spend_df['Hour']]
-        hour_labels = {h: f"{h % 12 if h % 12 != 0 else 12}{'am' if h < 12 or h == 24 else 'pm'}" for h in
-                       target_hours_int}
-        hourly_spend_df['Display Hour'] = pd.Categorical(hourly_spend_df['Hour'].map(hour_labels),
-                                                         categories=hour_labels.values(), ordered=True)
-        fig = px.bar(hourly_spend_df, x='Display Hour', y='Spent',
-                     title="Total Labor Spend by Hour (Top 3 Highlighted)", template="plotly_white", text_auto='$.2s')
-        fig.update_traces(marker_color=colors)
-        fig.update_layout(yaxis=dict(tickprefix="$"))
-
-    table = dash_table.DataTable(data=l_df.to_dict('records'), columns=[{"name": i, "id": i} for i in l_df.columns],
-                                 page_size=10, style_header={'backgroundColor': '#007bff', 'color': 'white'})
-    csv = dcc.send_data_frame(l_df.to_csv,
-                              "Labor_Report_2026.csv") if callback_context.triggered_id == 'btn-download-labor' else None
-    return metrics_ui, fig, table, csv
-
-
-@app.callback(
-    [Output('inventory-metrics-cards', 'children'), Output('inventory-status-graph', 'figure')],
-    [Input('stored-inventory-data', 'data'), Input('inv-stock-col', 'value'), Input('inv-name-col', 'value'),
-     Input('reorder-threshold', 'value')]
-)
-def update_inv(js, stock, name, threshold):
+def update_sales_intelligence(js, rev, cust, span, f_costs, cogs_pct):
     df = safe_load_df(js)
-    if df.empty or not stock or stock not in df.columns: return "Upload Inventory", go.Figure()
-    df[stock] = pd.to_numeric(df[stock], errors='coerce').fillna(0)
-    low = len(df[df[stock] < float(threshold or 0)])
-    fig = px.bar(df.nlargest(15, stock), x=name if (name and name in df.columns) else df.index, y=stock,
-                 color_continuous_scale='Reds_r')
-    return html.Div(f"Low Stock Items: {low}", style={'backgroundColor': '#dc3545', 'color': 'white', 'padding': '10px',
-                                                      'borderRadius': '5px'}), fig
+    if df.empty or not rev: return "", "Upload Sales Data to See 2026 Insights", go.Figure()
+
+    # Financial Cleaning
+    df[rev] = pd.to_numeric(df[rev].astype(str).str.replace('[$,]', '', regex=True), errors='coerce').fillna(0)
+    df = df.sort_values('Date')
+    total_rev = df[rev].sum()
+    order_count = len(df)
+    aov = total_rev / order_count if order_count > 0 else 0
+    gross_profit = total_rev * (1 - (cogs_pct / 100))
+
+    # 1. Topline Stats
+    topline = [
+        html.Div([html.Small("TOTAL REVENUE"), html.H2(f"${total_rev:,.0f}")],
+                 title="Total income before any expenses or deductions.",
+                 style={'flex': '1', 'backgroundColor': '#28a745', 'color': 'white', 'padding': '10px',
+                        'borderRadius': '8px', 'textAlign': 'center', 'cursor': 'help'}),
+        html.Div([html.Small("GROSS PROFIT"), html.H2(f"${gross_profit:,.0f}")],
+                 title=f"Estimated take-home after a {cogs_pct}% product cost.",
+                 style={'flex': '1', 'backgroundColor': '#1e7e34', 'color': 'white', 'padding': '10px',
+                        'borderRadius': '8px', 'textAlign': 'center', 'cursor': 'help'}),
+        html.Div([html.Small("AVG ORDER (AOV)"), html.H2(f"${aov:,.2f}")],
+                 title="The average amount spent per transaction.",
+                 style={'flex': '1', 'backgroundColor': '#fff', 'border': '1px solid #28a745', 'padding': '10px',
+                        'borderRadius': '8px', 'textAlign': 'center', 'cursor': 'help'}),
+        html.Div([html.Small("ORDERS"), html.H2(f"{order_count:,}")],
+                 title="Total count of all processed sales records.",
+                 style={'flex': '1', 'backgroundColor': '#fff', 'border': '1px solid #28a745', 'padding': '10px',
+                        'borderRadius': '8px', 'textAlign': 'center', 'cursor': 'help'}),
+    ]
+
+    # 2. Advanced KPI Logic
+    daily_rev = df.set_index('Date').resample('D')[rev].sum().reset_index()
+    # Calculate 7-Day Average Revenue (Rolling)
+    seven_day_avg = daily_rev[rev].tail(7).mean() if len(daily_rev) >= 7 else daily_rev[rev].mean()
+
+    monthly = df.set_index('Date').resample('ME')[rev].sum().reset_index()
+
+    retention, churn = 0, 0
+    if cust and cust in df.columns:
+        counts = df[cust].value_counts()
+        retention = (len(counts[counts > 1]) / len(counts)) * 100
+        recent = df[df['Date'] > (df['Date'].max() - pd.Timedelta(days=60))][cust].nunique()
+        churn = max(0, (1 - (recent / df[cust].nunique())) * 100)
+
+    be_progress = min(100, (monthly[rev].iloc[-1] / f_costs * 100)) if f_costs and not monthly.empty else 0
+
+    # 3. KPI Cards with Tooltips (REPLACED VELOCITY WITH 7-DAY AVG)
+    kpi_cards = html.Div([
+        html.Div([
+            html.Div([
+                html.Small("7-DAY DAILY AVG", style={'borderBottom': '1px dotted #ccc'}),
+                html.H3(f"${seven_day_avg:,.2f}", style={'color': '#28a745'})
+            ], title="7-Day Rolling Average: Your actual daily revenue performance over the last week of data.",
+                style={'flex': '1', 'borderRight': '1px solid #eee', 'cursor': 'help'}),
+
+            html.Div([
+                html.Small("RETENTION", style={'borderBottom': '1px dotted #ccc'}),
+                html.H3(f"{retention:.1f}%", style={'color': '#007bff'})
+            ], title="The percentage of your customers who have purchased more than once.",
+                style={'flex': '1', 'borderRight': '1px solid #eee', 'cursor': 'help'}),
+
+            html.Div([
+                html.Small("CHURN RISK", style={'borderBottom': '1px dotted #ccc'}),
+                html.H3(f"{churn:.1f}%", style={'color': '#dc3545'})
+            ], title="Percentage of customers who haven't returned in the last 60 days.",
+                style={'flex': '1', 'borderRight': '1px solid #eee', 'cursor': 'help'}),
+
+            html.Div([
+                html.Small("BREAK-EVEN", style={'borderBottom': '1px dotted #ccc'}),
+                html.H3(f"{be_progress:.1f}%"),
+                html.Div(style={'backgroundColor': '#eee', 'height': '8px', 'borderRadius': '4px'},
+                         children=[html.Div(
+                             style={'backgroundColor': '#28a745', 'height': '100%', 'width': f'{be_progress}%',
+                                    'borderRadius': '4px'})])
+            ], title=f"Monthly progress toward covering your ${f_costs:,.0f} fixed costs.",
+                style={'flex': '1.5', 'padding': '0 15px', 'cursor': 'help'}),
+        ], style={'display': 'flex', 'textAlign': 'center', 'padding': '15px', 'backgroundColor': '#fff',
+                  'borderRadius': '8px', 'boxShadow': '0 2px 4px rgba(0,0,0,0.05)', 'border': '1px solid #eee'})
+    ], style={'marginBottom': '20px'})
+
+    # 4. Final Graphing
+    monthly['Trend'] = monthly[rev].rolling(window=span or 3).mean()
+    fig = px.bar(monthly, x='Date', y=rev, title="Monthly Revenue Performance vs Trend",
+                 color_discrete_sequence=['#28a745'], opacity=0.7, text_auto='$.2s')
+    fig.add_scatter(x=monthly['Date'], y=monthly['Trend'], name="Trendline", line=dict(color='orange', width=4))
+
+    if not monthly.empty:
+        peak = monthly.loc[monthly[rev].idxmax()]
+        trough = monthly.loc[monthly[rev].idxmin()]
+        fig.add_annotation(x=peak['Date'], y=peak[rev], text="PEAK REVENUE", showarrow=True, arrowhead=2,
+                           bgcolor="#28a745", font=dict(color="white"))
+        fig.add_annotation(x=trough['Date'], y=trough[rev], text="LOW POINT", showarrow=True, arrowhead=2,
+                           bgcolor="#dc3545", font=dict(color="white"))
+
+    fig.update_layout(template="plotly_white", margin=dict(t=60, b=0, l=0, r=0), yaxis_tickprefix='$')
+    fig.update_traces(textposition='outside', selector=dict(type='bar'))
+
+    return topline, kpi_cards, fig
+
+
+@app.callback(
+    Output('labor-hourly-precision-graph', 'figure'),
+    [Input('stored-labor-data', 'data'), Input('wage-col', 'value'), Input('start-col', 'value'),
+     Input('end-col', 'value')]
+)
+def update_labor_view(js, wage, start, end):
+    df = safe_load_df(js)
+    if df.empty or not all([wage, start, end]): return go.Figure()
+
+    hourly_df = distribute_wages_hourly(df, wage, start, end)
+    target_hours = list(range(9, 24)) + list(range(0, 4))
+    hourly_df = hourly_df[hourly_df['Hour'].isin(target_hours)]
+    top_3 = hourly_df.nlargest(3, 'Spent')['Hour'].tolist()
+    colors = ['#f8d7da' if h in top_3 else '#007bff' for h in hourly_df['Hour']]
+
+    labels = {h: f"{h % 12 if h % 12 != 0 else 12}{'am' if h < 12 or h == 24 else 'pm'}" for h in target_hours}
+    hourly_df['Display Hour'] = pd.Categorical(hourly_df['Hour'].map(labels), categories=labels.values(), ordered=True)
+
+    fig = px.bar(hourly_df, x='Display Hour', y='Spent', title="Labor Cost by Hour", text_auto='$.2s')
+    fig.update_traces(marker_color=colors, textposition='outside', selector=dict(type='bar'))
+    fig.update_layout(template="plotly_white", yaxis_tickprefix='$')
+    return fig
 
 
 if __name__ == '__main__':
