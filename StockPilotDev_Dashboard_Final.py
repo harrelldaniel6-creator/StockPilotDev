@@ -33,9 +33,19 @@ def parse_contents(contents, filename):
 def safe_load_df(json_data):
     if not json_data: return pd.DataFrame()
     df = pd.read_json(io.StringIO(json_data), orient='split')
+
+    # Identify all date-like columns
     dt_cols = df.select_dtypes(include=['datetime64']).columns
-    if not dt_cols.empty and 'Date' not in df.columns: df['Date'] = df[dt_cols]
-    if 'Date' in df.columns: df['Date'] = pd.to_datetime(df['Date'])
+
+    # FIX: Don't force multiple columns into one 'Date' key
+    # Instead, ensure each time column is properly converted
+    for col in dt_cols:
+        df[col] = pd.to_datetime(df[col])
+
+    # Default 'Date' to the first time column found for sorting
+    if not dt_cols.empty and 'Date' not in df.columns:
+        df['Date'] = df[dt_cols[0]]
+
     return df
 
 
@@ -46,28 +56,32 @@ def append_data(existing_json, new_json):
 
 
 def distribute_wages_hourly(df, wage_col, start_col, end_col):
-    if df.empty or not all(c in df.columns for c in [wage_col, start_col, end_col]): return pd.DataFrame()
-    df = df.copy()
-    df[start_col] = pd.to_datetime(df[start_col], errors='coerce')
-    df[end_col] = pd.to_datetime(df[end_col], errors='coerce')
-    df = df.dropna(subset=[start_col, end_col])
-    df[wage_col] = pd.to_numeric(df[wage_col].astype(str).str.replace('[$,]', '', regex=True), errors='coerce').fillna(
-        0)
-
+    # This logic handles shifts that cross midnight automatically
+    # as long as the columns contain both Date + Time.
     hourly_costs = []
     for _, row in df.iterrows():
-        start, end, total_wage = row[start_col], row[end_col], row[wage_col]
+        start, end = row[start_col], row[end_col]
+        total_wage = row[wage_col]
+
+        # Calculate total hours (e.g., 6 PM to 2 AM = 8 hours)
         duration = (end - start).total_seconds() / 3600
         if duration <= 0: continue
+
         wage_per_h = total_wage / duration
         curr = start
         while curr < end:
             next_h = curr.replace(minute=0, second=0, microsecond=0) + pd.Timedelta(hours=1)
             seg_end = min(next_h, end)
-            hourly_costs.append({'Hour': curr.hour, 'Spent': (seg_end - curr).total_seconds() / 3600 * wage_per_h})
+
+            # This 'Hour' will correctly map to 18, 19... 23, 0, 1
+            hourly_costs.append({
+                'Hour': curr.hour,
+                'Spent': (seg_end - curr).total_seconds() / 3600 * wage_per_h
+            })
             curr = next_h
+
     res = pd.DataFrame(hourly_costs)
-    return res.groupby('Hour')['Spent'].sum().reset_index() if not res.empty else res
+    return res.groupby('Hour')['Spent'].sum().reset_index()
 
 
 # --- 3. App Layout ---
@@ -181,16 +195,30 @@ app.layout = html.Div([
 def handle_uploads(contents, reset, names, labor, sales, inv):
     if callback_context.triggered_id == 'reset-btn': return None, None, None
     if not contents: raise exceptions.PreventUpdate
+
     for c, n in zip(contents, names):
         js = parse_contents(c, n)
         if js:
+            # Load temporary DF to check internal headers
+            temp_df = safe_load_df(js)
+            cols = [col.lower() for col in temp_df.columns]
             fn = n.lower()
-            if any(k in fn for k in ['labor', 'wage']):
+
+            # ROBUST ROUTING LOGIC
+            # 1. Check for Labor/Payroll terms
+            if any(k in fn for k in ['labor', 'wage', 'payroll', 'shift']) or \
+                    any(k in cols for k in ['wage', 'start', 'end', 'clock']):
                 labor = append_data(labor, js)
-            elif any(k in fn for k in ['inv', 'stock']):
+
+            # 2. Check for Inventory/Stock terms
+            elif any(k in fn for k in ['inv', 'stock', 'count', 'supplies']) or \
+                    any(k in cols for k in ['stock', 'qty', 'on hand', 'reorder']):
                 inv = append_data(inv, js)
+
+            # 3. Default to Sales if it looks like financial data
             else:
                 sales = append_data(sales, js)
+
     return labor, sales, inv
 
 
