@@ -6,9 +6,10 @@ import plotly.express as px
 import dash
 from dash import dcc, html, Input, Output, State, exceptions
 from plotly.subplots import make_subplots
+import numpy as np
 
 # --- 1. App Setup ---
-app = dash.Dash(__name__, title="StockPilotDev v3.9.1 | 2026 Strategy Suite")
+app = dash.Dash(__name__, title="StockPilotDev v4.2 | Chef's Statement Edition")
 server = app.server
 
 
@@ -81,9 +82,9 @@ app.layout = html.Div([
     dcc.Store(id='stored-inventory-data', storage_type='session'),
 
     html.Div([
-        html.H1("StockPilotDev: Integrated Strategy Suite (v3.9.1)",
+        html.H1("StockPilotDev: Predictive Strategy Suite (v4.2)",
                 style={'color': '#ffffff', 'margin': '0', 'fontWeight': '300'}),
-        html.P("2026 SMB Command Center | Sales, Labor & Inventory", style={'color': '#cbd5e0'})
+        html.P("2026 SMB Command Center | Full Integrated Intelligence", style={'color': '#cbd5e0'})
     ], style={'backgroundColor': '#2d3748', 'padding': '40px 20px', 'textAlign': 'center',
               'borderRadius': '0 0 20px 20px'}),
 
@@ -98,6 +99,18 @@ app.layout = html.Div([
                         style={'backgroundColor': '#e53e3e', 'color': 'white', 'padding': '10px 25px',
                                'borderRadius': '8px', 'border': 'none', 'marginTop': '15px', 'cursor': 'pointer'})
         ], style={'margin': '30px auto', 'maxWidth': '800px', 'textAlign': 'center'}),
+
+        # PILLAR 0: THE CHEF'S STATEMENT (Robust Briefing)
+        html.Div([
+            html.Div([
+                html.H2("👨‍🍳 The Chef's Statement", style={'color': '#2d3748', 'margin': '0'}),
+                html.Span("Strategic Business Health Summary", style={'color': '#718096', 'fontSize': '14px'})
+            ], style={'borderBottom': '1px solid #edf2f7', 'paddingBottom': '15px', 'marginBottom': '20px'}),
+            html.Div(id='daily-briefing-content')
+        ], style={
+            'padding': '30px', 'backgroundColor': '#fff', 'borderRadius': '15px', 'marginBottom': '30px',
+            'borderLeft': '10px solid #2d3748', 'boxShadow': '0 10px 15px -3px rgba(0,0,0,0.1)'
+        }),
 
         # PILLAR 1: SALES & FINANCIALS
         html.Div([
@@ -144,7 +157,7 @@ app.layout = html.Div([
                 html.Div([html.Label("Reorder Pt:"), dcc.Input(id='reorder-threshold', type='number', value=20)],
                          style={'flex': '0.5'}),
             ], style={'display': 'flex', 'gap': '20px', 'marginBottom': '25px'}),
-            html.Div(id='inventory-kpi-container', style={'marginBottom': '20px'}),
+            html.Div(id='inventory-kpi-container', style={'display': 'flex', 'gap': '15px', 'marginBottom': '20px'}),
             html.Div(id='inventory-alerts-output'),
             dcc.Graph(id='inventory-graph')
         ], style={'padding': '30px', 'backgroundColor': '#fff', 'borderRadius': '15px',
@@ -157,19 +170,81 @@ app.layout = html.Div([
 # --- 4. Callbacks ---
 
 @app.callback(
+    Output('daily-briefing-content', 'children'),
+    [Input('stored-sales-data', 'data'), Input('stored-labor-data', 'data'), Input('stored-inventory-data', 'data')],
+    [State('sales-col', 'value'), State('labor-threshold', 'value'), State('inv-stock-col', 'value'),
+     State('inv-name-col', 'value'), State('wage-col', 'value'), State('start-col', 'value'), State('end-col', 'value')]
+)
+def update_chef_statement(s_js, l_js, i_js, rev_col, threshold, stock_col, name_col, wage, start, end):
+    if not any([s_js, l_js, i_js]):
+        return html.P("Awaiting data uploads to generate strategic statement...",
+                      style={'color': '#a0aec0', 'fontStyle': 'italic'})
+
+    s_df, l_df, i_df = safe_load_df(s_js), safe_load_df(l_js), safe_load_df(i_js)
+    briefing = []
+
+    # A. FINANCIAL & SALES INSIGHT (Integrated with Target)
+    if not s_df.empty and rev_col:
+        s_df[rev_col] = pd.to_numeric(s_df[rev_col].astype(str).str.replace('[$,]', '', regex=True),
+                                      errors='coerce').fillna(0)
+        total_rev = s_df[rev_col].sum()
+        avg_check = total_rev / len(s_df) if len(s_df) > 0 else 0
+
+        briefing.append(html.Div([
+            html.B("💰 Sales Velocity: "),
+            f"You've captured ${total_rev:,.2f} in total revenue. With an average ticket of ${avg_check:,.2f}, your focus should be on "
+            f"{'volume' if avg_check > 50 else 'upselling'} to hit your growth targets."
+        ], style={'marginBottom': '10px'}))
+
+    # B. LABOR EFFICIENCY (Integrated with Sales)
+    if not l_df.empty and not s_df.empty and all([wage, start, end, rev_col]):
+        hourly_labor = distribute_wages_hourly(l_df, wage, start, end)
+        total_labor = hourly_labor['Spent'].sum()
+        labor_pct = (total_labor / total_rev * 100) if total_rev > 0 else 0
+
+        status_color = "#38a169" if labor_pct <= threshold else "#e53e3e"
+        briefing.append(html.Div([
+            html.B("👥 Labor Correlation: ", style={'color': status_color}),
+            f"Your labor cost is currently {labor_pct:.1f}% of sales. ",
+            f"This is {'performing well' if labor_pct <= threshold else 'exceeding target'}. "
+            "Examine red-highlighted hours in the Productivity graph to tighten scheduling."
+        ], style={'marginBottom': '10px'}))
+
+    # C. INVENTORY RISK & CASH FLOW
+    if not i_df.empty and stock_col:
+        i_df[stock_col] = pd.to_numeric(i_df[stock_col], errors='coerce').fillna(0)
+        total_inv_val = i_df[stock_col].sum()
+        low_items = i_df[i_df[stock_col] < 10][name_col].tolist()
+
+        briefing.append(html.Div([
+            html.B("📦 Inventory & Capital: "),
+            f"You have ${total_inv_val:,.2f} tied up in stock. ",
+            html.Span(f"IMMEDIATE ACTION: Reorder {', '.join(low_items[:3])}.", style={'color': '#e53e3e',
+                                                                                       'fontWeight': 'bold'}) if low_items else "Stock levels are currently stable across high-velocity items."
+        ], style={'marginBottom': '10px'}))
+
+    # D. OVERALL SUMMARY
+    briefing.append(html.Div([
+        html.Hr(style={'borderColor': '#edf2f7'}),
+        html.I(
+            "Chef's Advice: Focus on high-margin items during peak hours to maximize your Labor-to-Sales efficiency.")
+    ], style={'marginTop': '15px', 'color': '#4a5568'}))
+
+    return briefing
+
+
+@app.callback(
     [Output('stored-labor-data', 'data'), Output('stored-sales-data', 'data'), Output('stored-inventory-data', 'data')],
     [Input('upload-data', 'contents'), Input('reset-btn', 'n_clicks')],
-    [State('upload-data', 'filename'), State('stored-labor-data', 'data'),
-     State('stored-sales-data', 'data'), State('stored-inventory-data', 'data')]
+    [State('upload-data', 'filename'), State('stored-labor-data', 'data'), State('stored-sales-data', 'data'),
+     State('stored-inventory-data', 'data')]
 )
 def handle_uploads(contents, reset_clicks, filenames, l_js, s_js, i_js):
     ctx = dash.callback_context
     if not ctx.triggered: return l_js, s_js, i_js
-
     trigger_id = ctx.triggered[0]['prop_id'].split('.')[0]
     if trigger_id == 'reset-btn': return None, None, None
     if not contents: return l_js, s_js, i_js
-
     for c, f in zip(contents, filenames):
         if 'labor' in f.lower():
             l_js = parse_contents(c, f)
@@ -254,85 +329,81 @@ def update_sales_pillar(js, rev, cust, cogs, target):
 )
 def update_labor_pillar(l_js, s_js, wage, start, end, rev_col, threshold):
     l_df, s_df = safe_load_df(l_js), safe_load_df(s_js)
-    if l_df.empty or not all([wage, start, end]):
-        return "", "Upload Labor Data to see analysis.", go.Figure()
+    if l_df.empty or not all([wage, start, end]): return "", "Upload Labor Data.", go.Figure()
 
     hourly_labor = distribute_wages_hourly(l_df, wage, start, end)
-    total_labor_cost = hourly_labor['Spent'].sum()
-    total_labor_hours = hourly_labor['Hours_Count'].sum()
+    total_cost, total_hours = hourly_labor['Spent'].sum(), hourly_labor['Hours_Count'].sum()
 
-    total_revenue = 0
-    total_transactions = 0
+    revenue = 0
     if not s_df.empty and rev_col:
         s_df[rev_col] = pd.to_numeric(s_df[rev_col].astype(str).str.replace('[$,]', '', regex=True),
                                       errors='coerce').fillna(0)
-        total_revenue = s_df[rev_col].sum()
-        total_transactions = len(s_df)
+        revenue = s_df[rev_col].sum()
 
-    labor_pct = (total_labor_cost / total_revenue * 100) if total_revenue > 0 else 0
-    splh = total_revenue / total_labor_hours if total_labor_hours > 0 else 0
-    tplh = total_transactions / total_labor_hours if total_labor_hours > 0 else 0
-    priority_savings = max(0, total_labor_cost - (total_revenue * (threshold / 100)))
+    labor_pct = (total_cost / revenue * 100) if revenue > 0 else 0
+    splh = revenue / total_hours if total_hours > 0 else 0
+    priority_savings = max(0, total_cost - (revenue * (threshold / 100)))
 
     kpis = [
-        html.Div([html.Small("LABOR SPEND"), html.H3(f"${total_labor_cost:,.2f}")],
+        html.Div([html.Small("LABOR SPEND"), html.H3(f"${total_cost:,.2f}")],
                  style={'flex': '1', 'minWidth': '150px', 'backgroundColor': '#5a67d8', 'color': 'white',
                         'padding': '20px', 'borderRadius': '12px'}),
         html.Div([html.Small("LABOR %"), html.H3(f"{labor_pct:.1f}%")],
                  style={'flex': '1', 'minWidth': '150px', 'backgroundColor': '#4c51bf', 'color': 'white',
                         'padding': '20px', 'borderRadius': '12px'}),
-        html.Div([html.Small("SALES PER HR (SPLH)"), html.H3(f"${splh:,.2f}")],
+        html.Div([html.Small("SALES/HR (SPLH)"), html.H3(f"${splh:,.2f}")],
                  style={'flex': '1', 'minWidth': '150px', 'backgroundColor': '#48bb78', 'color': 'white',
-                        'padding': '20px', 'borderRadius': '12px'}),
-        html.Div([html.Small("TXNS PER HR (TPLH)"), html.H3(f"{tplh:.1f}")],
-                 style={'flex': '1', 'minWidth': '150px', 'backgroundColor': '#38a169', 'color': 'white',
                         'padding': '20px', 'borderRadius': '12px'}),
         html.Div([html.Small("PRIORITY SAVINGS"), html.H3(f"${priority_savings:,.2f}")],
                  style={'flex': '1', 'minWidth': '150px', 'backgroundColor': '#f56565', 'color': 'white',
                         'padding': '20px', 'borderRadius': '12px'})
     ]
 
-    top_3_peaks = hourly_labor['Spent'].nlargest(3).values
-    colors = ['#f56565' if val in top_3_peaks else '#5a67d8' for val in hourly_labor['Spent']]
-
+    top_peaks = hourly_labor['Spent'].nlargest(3).values
+    colors = ['#f56565' if v in top_peaks else '#5a67d8' for v in hourly_labor['Spent']]
     fig = go.Figure(data=[go.Bar(x=hourly_labor['Hour'], y=hourly_labor['Spent'], marker_color=colors)])
-    fig.update_layout(title="Hourly Labor Spend (Peaks in Red)", xaxis_title="Hour of Day", yaxis=dict(tickformat="$,"),
-                      template="plotly_white")
+    fig.update_layout(title="Hourly Labor Spend", yaxis=dict(tickformat="$,"), template="plotly_white")
 
-    summary = f"Productivity: ${splh:,.2f}/hr. Savings potential: ${priority_savings:,.2f}."
-    return kpis, summary, fig
+    return kpis, f"Efficiency: ${splh:,.2f}/hr. Savings potential: ${priority_savings:,.2f}.", fig
 
 
 @app.callback(
     [Output('inventory-alerts-output', 'children'), Output('inventory-graph', 'figure'),
      Output('inventory-kpi-container', 'children')],
-    [Input('stored-inventory-data', 'data'), Input('inv-stock-col', 'value'), Input('inv-name-col', 'value'),
-     Input('reorder-threshold', 'value')]
+    [Input('stored-inventory-data', 'data'), Input('stored-sales-data', 'data'), Input('inv-stock-col', 'value'),
+     Input('inv-name-col', 'value'), Input('reorder-threshold', 'value'), Input('sales-col', 'value')]
 )
-def update_inventory_pillar(i_js, stock_col, name_col, reorder_pt):
+def update_inventory_pillar(i_js, s_js, stock_col, name_col, reorder_pt, sales_val_col):
     if not i_js or not all([stock_col, name_col]): return html.Div("Upload inventory data."), go.Figure(), ""
-    i_df = safe_load_df(i_js)
+    i_df, s_df = safe_load_df(i_js), safe_load_df(s_js)
     i_df[stock_col] = pd.to_numeric(i_df[stock_col], errors='coerce').fillna(0)
-    total_val = i_df[stock_col].sum()
 
-    kpi_card = html.Div([
-        html.Small("TOTAL INVENTORY VALUE", style={'color': '#718096', 'fontWeight': 'bold'}),
-        html.H3(f"${total_val:,.2f}", style={'margin': '5px 0 0 0', 'color': '#2d3748'})
-    ], style={'padding': '20px', 'backgroundColor': '#edf2f7', 'borderRadius': '12px', 'width': 'fit-content',
-              'borderLeft': '5px solid #718096'})
+    i_df['days_left'] = np.inf
+    daily_vel = 0
+    if not s_df.empty:
+        date_col = s_df.select_dtypes(include=['datetime64']).columns[0]
+        days = (s_df[date_col].max() - s_df[date_col].min()).days or 1
+        daily_vel = len(s_df) / days
+        i_df['days_left'] = i_df[stock_col] / daily_vel
 
-    reorder_val = float(reorder_pt) if reorder_pt else 0
-    low_stock_df = i_df[i_df[stock_col] < reorder_val]
-    alert_content = [
-        html.H3(f"⚠️ {len(low_stock_df)} LOW STOCK ALERTS", style={'color': '#e53e3e'}),
-        html.Ul([html.Li(f"{row[name_col]}: {row[stock_col]} remaining") for _, row in low_stock_df.iterrows()])
+    kpi_cards = [
+        html.Div([html.Small("TOTAL INVENTORY VALUE"), html.H2(f"${i_df[stock_col].sum():,.2f}")],
+                 style={'padding': '20px', 'backgroundColor': '#edf2f7', 'borderRadius': '12px',
+                        'borderLeft': '5px solid #718096'}),
+        html.Div([html.Small("DAILY BURN RATE"), html.H2(f"{daily_vel:.1f} items/day")],
+                 style={'padding': '20px', 'backgroundColor': '#edf2f7', 'borderRadius': '12px',
+                        'borderLeft': '5px solid #48bb78'})
     ]
 
+    low_stock = i_df[i_df[stock_col] < float(reorder_pt or 0)].sort_values('days_left')
+    alert_content = [html.H3("⚠️ STOCK RISKS"), html.Ul(
+        [html.Li(f"{r[name_col]}: {r[stock_col]} left (~{r['days_left']:.1f} days)") for _, r in low_stock.iterrows()])]
+
     fig = go.Figure(data=[go.Bar(x=i_df[name_col], y=i_df[stock_col], marker_color='#718096')])
-    fig.add_hline(y=reorder_val, line_dash="dash", line_color="#e53e3e", annotation_text="REORDER POINT")
+    fig.add_hline(y=float(reorder_pt or 0), line_dash="dash", line_color="#e53e3e")
     fig.update_layout(title="Current Stock Levels", yaxis=dict(tickformat="$,"), template="plotly_white")
 
-    return alert_content, fig, kpi_card
+    return alert_content, fig, kpi_cards
 
 
 if __name__ == '__main__':

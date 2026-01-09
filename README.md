@@ -1,23 +1,21 @@
-StockPilotDev: The Chef-Analyst Strategy Suite
-Overview
-StockPilotDev is a high-performance data analysis suite designed specifically for small business restaurant owners. Most data tools are built by engineers who have never worked a double on a Friday night. StockPilotDev is different. Built by a chef with 17 years of operational experience, this tool bridges the gap between raw POS data and real-world kitchen results.
+# StockPilotDev v3.9.1 | Integrated Strategy Suite
 
-Core Pillars
-📈 Sales Intelligence: Tracks Revenue, Gross Profit, and Customer Lifetime Value (CLV) to identify your most loyal "VIP" guests.
+A high-performance data analysis dashboard designed for small business owners to monitor Sales, Labor Productivity, and Inventory Intelligence in real-time.
 
-👥 Labor Productivity: Uses "Leak Detection" to pinpoint the exact hours where labor spend exceeds revenue.
+## Key Features
+- **Sales & Financials**: Track Revenue vs. Target, Gross Profit, and Customer Retention.
+- **Labor Productivity**: 
+    - **SPLH (Sales Per Labor Hour)**: Measures revenue efficiency.
+    - **TPLH (Transactions Per Labor Hour)**: Tracks operational hustle.
+    - **Priority Savings**: Identifies dollar-leakage when exceeding labor caps.
+- **Inventory Intelligence**: 
+    - **Total Asset Valuation**: Real-time dollar value of on-hand stock.
+    - **Dynamic Reorder Alerts**: Visual thresholds for low-stock items.
 
-📦 Inventory Command: Real-time stock tracking with automated reorder alerts to prevent 86'd items.
-
-The Chef-Analyst Advantage
-Unlike standard generic data tools, StockPilotDev focuses on Contextual Analysis. It doesn't just show a high labor cost; it identifies "yield and trim" prep opportunities and identifies specific "Leak Windows" (like the critical 4 PM prep-to-service transition) where profit is often lost.
-
-Tech Stack
-Language: Python
-
-Framework: Dash by Plotly
-
-Database: SQLite (stockpilot.db)
+## Tech Stack
+- **Python**: Core logic and data processing.
+- **Plotly/Dash**: Interactive UI and financial visualization.
+- **Pandas**: Advanced data manipulation.
 
 Deployment: 2026 SMB Command Center
 
