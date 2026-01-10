@@ -1,0 +1,1615 @@
+Directory structure:
+└── StockPilotSafe/
+    ├── __init__.py
+    ├── create_test_alert.py
+    ├── database_setup.py
+    ├── deploy-trigger.txt
+    ├── deployment_trigger.txt
+    ├── git
+    ├── inventory_checker.py
+    ├── inventory_dashboard.py
+    ├── labor_analytics.py
+    ├── requirements.txt
+    ├── run_all_scripts.bat
+    ├── StockPilot_Dashboard_Output.html
+    ├── StockPilotDev_Dashboard.html
+    ├── StockPilotDev_Dashboard_Final.py
+    ├── StockPilotDev_Inventory_Dashboard.html
+    ├── StockPilotDev_Master_Dashboard.html
+    ├── data/
+    │   ├── 2025-12-29 StockPilotDev_SalesModel_Test.csv
+    │   ├── 2025-12-29 StockPilotDev_SalesModel_v01.xlsx
+    │   ├── 2025-12-29_StockPilotDev_Labor Test CSV.csv
+    │   ├── 2025-12-29_StockPilotDev_LaborModel_v01.xlsx
+    │   ├── synthetic_inventory_data_2026-01-06.csv
+    │   └── synthetic_sales_data_2026-01-04.csv
+    └── PycharmProjects/
+        └── setup_database/
+            ├── create_tables.py
+            ├── dashboard_app.py
+            ├── Dockerfile
+            ├── fetch_data.py
+            ├── generate_report.py
+            ├── launch_dashboard.py
+            ├── requirements.txt
+            ├── run_workflow.py
+            ├── Stock Pilot Dev Dashboard_backup.py
+            ├── stock_report.html
+            └── style.css
+
+================================================
+FILE: __init__.py
+================================================
+<<<<<<< HEAD
+
+=======
+
+>>>>>>> 9fa752d5c80fb25887288b10a3f5bfdc90cc6f57
+
+
+
+================================================
+FILE: create_test_alert.py
+================================================
+import sqlite3
+import os
+from datetime import datetime
+
+db_path = 'stockpilot.db'
+
+try:
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
+    # Ensure the table exists (in case it wasn't created yet)
+    cursor.execute('''
+                   CREATE TABLE IF NOT EXISTS reorder_alerts
+                   (
+                       product_name
+                       TEXT,
+                       variant_title
+                       TEXT,
+                       inventory_quantity
+                       INTEGER,
+                       alert_date
+                       TEXT
+                   )
+                   ''')
+
+    # Insert a sample reorder alert
+    test_alert = (
+        'Sample Product A',
+        'Large, Blue',
+        5,  # low inventory quantity
+        datetime.now().isoformat()
+    )
+
+    cursor.execute('''
+                   INSERT INTO reorder_alerts (product_name, variant_title, inventory_quantity, alert_date)
+                   VALUES (?, ?, ?, ?)
+                   ''', test_alert)
+
+    conn.commit()
+    print("Test reorder alert added successfully.")
+    conn.close()
+
+except sqlite3.Error as e:
+    print(f"SQLite error: {e}")
+except Exception as e:
+    print(f"An error occurred: {e}")
+
+
+================================================
+FILE: database_setup.py
+================================================
+import os
+import psycopg2
+import logging
+import sys
+
+# Make sure this import is included at the top
+
+# configure basic logging for console output during setup
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+
+Logger = logging.getLogger(__name__)
+
+# --- Start of New/Updated Database Connection Logic ---
+
+# 1. Dynamically find the directory where THIS script is located
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+# Function to get a database connection object using environment variable
+def get_db_connection():
+    """
+    Connects to the PostgreSQL database using the DATABASE_URL environment variable
+    provided by Render.
+    """
+    # Attempt to get the DATABASE_URL environment variable
+    DATABASE_URL = os.environ.get("DATABASE_URL")
+
+    if not DATABASE_URL:
+        Logger.error("Error: DATABASE_URL not set. Cannot connect to database.")
+        return None
+
+    try:
+        # Establish the connection using the URL
+        conn = psycopg2.connect(DATABASE_URL)
+        Logger.info("Database connection successful.")
+        return conn
+    except Exception as e:
+        Logger.error(f"Database connection failed: {e}")
+        return None
+
+# --- End of New/Updated Database Connection Logic ---
+
+# Note: If this file runs SQL commands directly, you must ensure they
+# use the 'get_db_connection()' function now. For example:
+
+# if __name__ == "__main__":
+#     conn = get_db_connection()
+#     if conn:
+#         print("Connection established successfully in setup script.")
+#         conn.close()
+
+
+
+================================================
+FILE: deploy-trigger.txt
+================================================
+"Triggering a new deployment to fix plotly installation." 
+
+
+
+================================================
+FILE: deployment_trigger.txt
+================================================
+"This file forces a new deployment build." 
+
+
+
+================================================
+FILE: git
+================================================
+[Empty file]
+
+
+================================================
+FILE: inventory_checker.py
+================================================
+import requests
+import sqlite3
+import pandas as pd
+from requests.auth import HTTPBasicAuth
+from datetime import datetime
+
+# --- CONFIGURATION ---
+SHOPIFY_SHOP_URL = "stockpilotdev.myshopify.com"
+SHOPIFY_API_KEY = "f2b14664e55eba76e5d2aefae8903b21"
+SHOPIFY_API_PASSWORD = "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"
+INVENTORY_THRESHOLD = 10  # Set your minimum inventory threshold here
+DB_PATH = 'stockpilot.db'
+
+
+def fetch_all_products_with_inventory():
+    print("Fetching product and inventory data from Shopify...")
+    products_url = f"https://{SHOPIFY_SHOP_URL}/admin/api/2024-04/products.json"
+    auth = HTTPBasicAuth(SHOPIFY_API_KEY, SHOPIFY_API_PASSWORD)
+    products_list = []
+
+    # Simple pagination loop (handles up to ~1000 products)
+    while products_url:
+        response = requests.get(products_url, auth=auth, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        products_list.extend(data.get('products', []))
+        # Get next page URL from headers if available
+        products_url = None
+        link_header = response.headers.get('Link')
+        if link_header:
+            for link in link_header.split(','):
+                if 'rel="next"' in link:
+                    products_url = link.split(';')[0].strip('<> ')
+                    break
+
+    variants_data = []
+    for product in products_list:
+        for variant in product.get('variants', []):
+            variants_data.append({
+                'product_name': product.get('title'),
+                'variant_title': variant.get('title'),
+                'inventory_quantity': variant.get('inventory_quantity'),
+                'variant_id': variant.get('id')
+            })
+    return pd.DataFrame(variants_data)
+
+
+def generate_reorder_alerts(df_inventory, threshold):
+    alerts = df_inventory[df_inventory['inventory_quantity'] <= threshold]
+    alerts['alert_date'] = datetime.now().isoformat()
+    return alerts[['product_name', 'variant_title', 'inventory_quantity', 'alert_date']]
+
+
+def save_alerts_to_db(df_alerts):
+    print(f"Saving {len(df_alerts)} alerts to database...")
+    conn = sqlite3.connect(DB_PATH)
+    # This replaces old alerts entirely every time the script runs
+    df_alerts.to_sql('reorder_alerts', conn, if_exists='replace', index=False)
+    conn.close()
+    print("Alerts saved successfully.")
+
+
+if __name__ == "__main__":
+    try:
+        inventory_df = fetch_all_products_with_inventory()
+        if not inventory_df.empty:
+            alerts_df = generate_reorder_alerts(inventory_df, INVENTORY_THRESHOLD)
+            save_alerts_to_db(alerts_df)
+            print(f"Inventory check complete. {len(alerts_df)} items are below threshold of {INVENTORY_THRESHOLD}.")
+        else:
+            print("No inventory data fetched. Check Shopify connection.")
+    except requests.exceptions.RequestException as e:
+        print(f"Network error during Shopify API call: {e}")
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}")
+
+
+================================================
+FILE: inventory_dashboard.py
+================================================
+import pandas as pd
+import plotly.graph_objects as go
+import os
+
+def create_inventory_dashboard(alerts_df):
+    """
+    Generates an HTML dashboard displaying inventory reorder alerts in a table format.
+    """
+    if alerts_df.empty:
+        print("No alerts to display. Inventory levels are healthy!")
+        return
+
+    # Create the Plotly figure
+    fig = go.Figure(data=[go.Table(
+        header=dict(
+            values=["Product Name", "Variant Title", "Inventory Quantity", "Alert Date"],
+            fill_color='#34495e', # Dark blue header from our first dashboard
+            font=dict(color='white', size=14),
+            align='left'
+        ),
+        cells=dict(
+            values=[alerts_df[c] for c in alerts_df.columns],
+            fill_color='#f5f5f5', # Light gray cells
+            align='left'
+        )
+    )])
+
+    fig.update_layout(
+        title='<b>StockPilotDev: Inventory Reorder Alerts</b>',
+        template="plotly_white",
+        height=600
+    )
+
+    output_html = 'StockPilotDev_Inventory_Dashboard.html'
+    fig.write_html(output_html)
+    print(f"Success! Inventory dashboard generated: {output_html}")
+    return output_html
+
+if __name__ == "__main__":
+    # Mock data to run this file standalone for testing (using column names from inventory_checker.py)
+    mock_alerts = {
+        'product_name': ['T-Shirt', 'Coffee Mug'],
+        'variant_title': ['Medium, Blue', 'Small, Red'],
+        'inventory_quantity': [2.0, 5.0],
+        'alert_date': [pd.Timestamp.now().isoformat(), pd.Timestamp.now().isoformat()]
+    }
+    alerts_df = pd.DataFrame(mock_alerts)
+    create_inventory_dashboard(alerts_df)
+
+
+================================================
+FILE: labor_analytics.py
+================================================
+import pandas as pd
+import numpy as np
+from datetime import datetime, timedelta
+
+
+# --- CONFIGURATION (Ensure TARGET_PRIME_COST is defined in the dashboard script) ---
+# TARGET_PRIME_COST = 55.0 # If this is needed here, uncomment and define it
+
+# Define or import necessary functions (placeholders below)
+def fetch_shopify_sales_data(start_date_iso):
+    # Your existing function implementation goes here
+    # Example: print(f"Fetching sales data starting from: {start_date_iso}")
+    # return pd.DataFrame(columns=['Date', 'Created_At', 'Total_Sales'])
+    return pd.DataFrame()  # Currently returns an empty DF, this needs implementation
+
+
+def get_reorder_alerts():
+    # Your existing function implementation goes here
+    # return pd.DataFrame()
+    return pd.DataFrame()
+
+
+# --- AGGREGATION & PROCESSING LAYER ---
+def get_aggregated_labor_data(LABOR_FILE_PATH, sales_data_df):
+    """
+    Processes raw labor and sales data into an hourly aggregated DataFrame.
+    """
+    labor_df = pd.read_csv(LABOR_FILE_PATH, format='mixed')
+    labor_df.columns = labor_df.columns.str.strip().str.replace(' ', '_')  # Clean up columns
+
+    # Ensure Date is parsed correctly
+    labor_df['Date'] = pd.to_datetime(labor_df['Date'], errors='coerce', format='mixed')
+    labor_df = labor_df.dropna(subset=['Date'])
+
+    # Ensure TimeIn/TimeOut are datetime objects (assuming 'H:M:S AM/PM' format)
+    labor_df['Time_In'] = pd.to_datetime(labor_df['Date'].dt.date.astype(str) + ' ' + labor_df['Time_In'],
+                                         format='%Y-%m-%d %I:%M:%S %p', errors='coerce')
+    labor_df['Time_Out'] = pd.to_datetime(labor_df['Date'].dt.date.astype(str) + ' ' + labor_df['Time_Out'],
+                                          format='%Y-%m-%d %I:%M:%S %p', errors='coerce')
+
+    labor_df = labor_df.dropna(subset=['Time_In', 'Time_Out'])
+
+    # Calculate Total_Hours and Labor_Cost
+    labor_df['Total_Hours'] = (labor_df['Time_Out'] - labor_df['Time_In']).dt.total_seconds() / 3600
+    labor_df['Labor_Cost'] = labor_df['Total_Hours'] * labor_df['Hourly_Rate']
+
+    # Aggregate by hour
+    labor_df['Hour'] = labor_df['Time_In'].dt.hour
+    hourly_labor_costs = labor_df.groupby(['Date', 'Hour'])['Labor_Cost'].sum().reset_index()
+
+    # Prepare sales data (from Shopify)
+    # NOTE: sales_data_df must be populated by fetch_shopify_sales_data()
+    sales_data_df['Date'] = pd.to_datetime(sales_data_df['Date']).dt.date
+    sales_data_df['Hour'] = pd.to_datetime(sales_data_df['Created_At']).dt.hour
+    hourly_sales = sales_data_df.groupby(['Date', 'Hour'])['Total_Sales'].sum().reset_index()
+    hourly_sales.rename(columns={'Total_Sales': 'Sales'}, inplace=True)
+
+    # Merge labor and sales data
+    processed_data = pd.merge(hourly_labor_costs, hourly_sales, on=['Date', 'Hour'], how='outer')
+    processed_data.fillna(0, inplace=True)
+
+    # Calculate Prime Cost % safely
+    processed_data['Prime_Cost_Pct'] = (processed_data['Labor_Cost'] / processed_data['Sales']) * 100
+    processed_data['Prime_Cost_Pct'] = processed_data['Prime_Cost_Pct'].replace([np.inf, -np.inf, np.nan], 0)
+
+    # --- DEBUGGING LINES ---
+    print("--- DEBUG: Processed Data Head ---")
+    print(processed_data.head())
+    print(f"--- DEBUG: Total rows in processed data: {len(processed_data)} ---")
+    # -----------------------
+
+    return processed_data
+
+# Note: The main execution logic is handled in StockPilotDev_Dashboard_Final.py which calls this function.
+
+
+
+================================================
+FILE: requirements.txt
+================================================
+altair==6.0.0
+attrs==25.4.0
+blinker==1.9.0
+cachetools==6.2.4
+certifi==2025.11.12
+charset-normalizer==3.4.4
+click==8.3.1
+colorama==0.4.6
+gitdb==4.0.12
+GitPython==3.1.45
+idna==3.11
+Jinja2==3.1.6
+jsonschema==4.25.1
+jsonschema-specifications==2025.9.1
+MarkupSafe==3.0.3
+narwhals==2.14.0
+numpy==1.26.4
+packaging==25.0
+pandas==2.3.3
+pillow==12.0.0
+protobuf==6.33.2
+pyarrow==22.0.0
+pydeck==0.9.1
+python-dateutil==2.9.0.post0
+pytz==2025.2
+referencing==0.37.0
+requests==2.32.5
+rpds-py==0.30.0
+six==1.17.0
+smmap==5.0.2
+streamlit==1.52.2
+tenacity==9.1.2
+toml==0.10.2
+tornado==6.5.4
+typing_extensions==4.15.0
+tzdata==2025.3
+urllib3==2.6.2
+watchdog==6.0.0
+gunicorn
+psycopg2-binary
+streamlit
+pandas
+ShopifyAPI
+plotly
+setuptools==58.0.0
+dash
+
+
+================================================
+FILE: run_all_scripts.bat
+================================================
+@echo off
+echo Running Inventory Checker...
+"C:\StockPilotSafe\.venv\Scripts\python.exe" "C:\StockPilotSafe\inventory_checker.py"
+
+echo Running Dashboard Generator...
+"C:\StockPilotSafe\.venv\Scripts\python.exe" "C:\StockPilotSafe\StockPilotDev_Dashboard_Final.py"
+
+echo Automation complete.
+pause
+
+
+================================================
+FILE: StockPilot_Dashboard_Output.html
+================================================
+Error reading file with 'cp1252': 'charmap' codec can't decode byte 0x8d in position 4781770: character maps to <undefined>
+
+
+================================================
+FILE: StockPilotDev_Dashboard.html
+================================================
+Error reading file with 'cp1252': 'charmap' codec can't decode byte 0x8d in position 4781770: character maps to <undefined>
+
+
+================================================
+FILE: StockPilotDev_Dashboard_Final.py
+================================================
+import base64
+import io
+import pandas as pd
+import plotly.graph_objects as go
+import plotly.express as px
+import dash
+from dash import dcc, html, Input, Output, State, exceptions, dash_table, callback_context
+import numpy as np
+import warnings
+
+# --- 1. App Setup ---
+warnings.filterwarnings("ignore", category=UserWarning, message="Could not infer format")
+app = dash.Dash(__name__, title="StockPilotDev v3.9.11 | 2026 Strategy Suite")
+server = app.server
+
+
+# --- 2. Helper Functions ---
+def safe_load_df(json_data):
+    if not json_data: return pd.DataFrame()
+    df = pd.read_json(io.StringIO(json_data), orient='split')
+    for col in df.columns:
+        if any(k in col.lower() for k in ['date', 'time', 'start', 'end']):
+            df[col] = pd.to_datetime(df[col], errors='coerce')
+    return df
+
+
+def find_date_col(df):
+    if df is None or df.empty: return None
+    dt_cols = df.select_dtypes(include=['datetime64', 'datetime64[ns]']).columns
+    # FIXED: Ensure a string is returned if columns exist
+    return dt_cols[0] if not dt_cols.empty else None
+
+
+def filter_df_by_date_range(df, start_date, end_date):
+    date_col = find_date_col(df)
+    if df.empty or not start_date or not end_date or date_col is None:
+        return df
+    df_filtered = df.copy()
+    # FIXED: Handle potential mixed timezone data gracefully
+    if df_filtered[date_col].dt.tz is not None:
+        df_filtered[date_col] = df_filtered[date_col].dt.tz_localize(None)
+    start_obj, end_obj = pd.to_datetime(start_date).tz_localize(None), pd.to_datetime(end_date).tz_localize(None)
+    return df_filtered[(df_filtered[date_col] >= start_obj) & (df_filtered[date_col] <= end_obj)]
+
+
+def distribute_wages_vectorized(df, wage_col, start_col, end_col):
+    if df.empty or not all(c in df.columns for c in [wage_col, start_col, end_col]):
+        return pd.DataFrame(columns=['Hour', 'Spent'])
+    temp = df.copy()
+    temp[wage_col] = pd.to_numeric(temp[wage_col].astype(str).str.replace('[$,]', '', regex=True),
+                                   errors='coerce').fillna(0)
+    temp = temp[temp[end_col] > temp[start_col]].dropna(subset=[start_col, end_col, wage_col])
+    hourly_data = []
+    for _, row in temp.iterrows():
+        dr = pd.date_range(start=row[start_col].floor('H'), end=row[end_col].ceil('H'), freq='H')
+        if len(dr) < 2: continue
+        duration_mins = (row[end_col] - row[start_col]).total_seconds() / 60
+        wage_per_min = row[wage_col] / duration_mins if duration_mins > 0 else 0
+        for i in range(len(dr) - 1):
+            seg_start, seg_end = max(dr[i], row[start_col]), min(dr[i + 1], row[end_col])
+            if seg_end > seg_start:
+                mins = (seg_end - seg_start).total_seconds() / 60
+                hourly_data.append({'Hour': dr[i].hour, 'Spent': mins * wage_per_min})
+    res = pd.DataFrame(hourly_data)
+    return res.groupby('Hour')['Spent'].sum().reset_index() if not res.empty else pd.DataFrame(
+        columns=['Hour', 'Spent'])
+
+
+def parse_contents(contents, filename):
+    content_type, content_string = contents.split(',')
+    decoded = base64.b64decode(content_string)
+    try:
+        df = pd.read_csv(io.StringIO(decoded.decode('utf-8'))) if 'csv' in filename else pd.read_excel(
+            io.BytesIO(decoded))
+        for col in df.columns:
+            if df[col].dtype == 'object':
+                temp_dates = pd.to_datetime(df[col], errors='coerce')
+                if not temp_dates.isna().all(): df[col] = temp_dates
+        return df.to_json(date_format='iso', orient='split')
+    except:
+        return None
+
+
+# --- 3. App Layout ---
+app.layout = html.Div([
+    html.Div([
+        html.H1("StockPilotDev: 2026 Strategy Suite", style={'color': '#ffffff', 'margin': '0', 'fontWeight': '800'}),
+        html.P("v3.9.11 | Performance Intelligence Dashboard", style={'color': '#95a5a6', 'marginTop': '5px'})
+    ], style={'backgroundColor': '#1a252f', 'padding': '30px', 'textAlign': 'left',
+              'borderBottom': '4px solid #3498db'}),
+
+    html.Div([
+        dcc.Upload(id='upload-data', children=html.Div(['Drag & Drop Data Files or click to browse']),
+                   style={'width': '400px', 'height': '50px', 'lineHeight': '50px', 'border': '2px dashed #bdc3c7',
+                          'borderRadius': '10px', 'textAlign': 'center', 'backgroundColor': '#fff'}, multiple=True),
+        html.Button("Reset Session", id="reset-btn",
+                    style={'backgroundColor': '#e74c3c', 'color': 'white', 'border': 'none', 'padding': '12px 25px',
+                           'borderRadius': '5px', 'marginLeft': '20px', 'cursor': 'pointer'})
+    ], style={'display': 'flex', 'alignItems': 'center', 'margin': '25px 50px'}),
+
+    dcc.Store(id='stored-labor-data', storage_type='session'),
+    dcc.Store(id='stored-sales-data', storage_type='session'),
+    dcc.Store(id='stored-inventory-data', storage_type='session'),
+
+    html.Div([
+        html.Div([
+            html.Label("Operational Filter Range:", style={'fontWeight': 'bold', 'color': '#2c3e50'}),
+            dcc.DatePickerRange(id='date-picker-range', style={'marginTop': '5px', 'border': 'none'})
+        ], style={'padding': '20px', 'backgroundColor': '#fff', 'borderRadius': '12px',
+                  'boxShadow': '0 4px 6px rgba(0,0,0,0.05)', 'marginBottom': '30px'})
+    ], style={'maxWidth': '1400px', 'margin': 'auto'}),
+
+    html.Div([
+        html.Div([
+            html.H2("ðŸ“ˆ REVENUE INTELLIGENCE ENGINE", style={'color': '#2c3e50', 'margin': '0', 'fontWeight': '700'}),
+            html.P("2026 Strategic Forecasting & Volatility Analysis", style={'color': '#7f8c8d', 'fontSize': '14px'})
+        ], style={'borderBottom': '2px solid #f1f2f6', 'paddingBottom': '15px', 'marginBottom': '25px'}),
+        html.Div([
+            html.Div([html.Label("Primary Grouping", style={'fontSize': '12px'}), dcc.Dropdown(id='cust-col')],
+                     style={'flex': '1'}),
+            html.Div([html.Label("Revenue Stream", style={'fontSize': '12px'}), dcc.Dropdown(id='sales-col')],
+                     style={'flex': '1'}),
+            html.Div([html.Label("Target Growth (%)", style={'fontSize': '12px'}),
+                      dcc.Input(id='growth-target', type='number', value=12,
+                                style={'width': '100%', 'padding': '8px'})], style={'flex': '0.5'}),
+        ], style={'display': 'flex', 'gap': '20px', 'backgroundColor': '#f8f9fa', 'padding': '20px',
+                  'borderRadius': '10px', 'marginBottom': '25px'}),
+
+        # Sales KPI Panel (4x2 Grid)
+        html.Div(id='sales-kpi-panel', style={'display': 'grid', 'gridTemplateColumns': 'repeat(4, 1fr)', 'gap': '20px',
+                                              'marginBottom': '30px'}),
+
+        html.Div([
+            html.Div([
+                html.H4("Sales Velocity (Daily vs 7D MA)", style={'fontSize': '16px', 'color': '#2c3e50'}),
+                dcc.Graph(id='sales-trend-graph', config={'displayModeBar': False}, style={'height': '350px'})
+            ], style={'width': '65%', 'padding': '20px', 'boxShadow': '0 4px 6px rgba(0,0,0,0.05)',
+                      'borderRadius': '10px', 'backgroundColor': '#fff'}),
+            html.Div([
+                html.H4("Avg Seasonality (DOW)", style={'fontSize': '16px', 'color': '#2c3e50'}),
+                dcc.Graph(id='sales-dow-graph', config={'displayModeBar': False}, style={'height': '350px'})
+            ], style={'width': '35%', 'padding': '20px', 'boxShadow': '0 4px 6px rgba(0,0,0,0.05)',
+                      'borderRadius': '10px', 'backgroundColor': '#fff'})
+        ], style={'display': 'flex', 'gap': '20px', 'marginBottom': '20px'}),
+        html.Div([
+            html.H4("30-Day Revenue Projection", style={'fontSize': '16px', 'color': '#2c3e50'}),
+            dcc.Graph(id='sales-forecast-graph', config={'displayModeBar': False}, style={'height': '300px'})
+        ], style={'padding': '20px', 'boxShadow': '0 4px 6px rgba(0,0,0,0.05)', 'borderRadius': '10px',
+                  'backgroundColor': '#fff'})
+    ], style={'padding': '40px', 'margin': '20px auto', 'maxWidth': '1400px', 'backgroundColor': '#fff',
+              'borderRadius': '15px', 'boxShadow': '0 10px 30px rgba(0,0,0,0.1)'}),
+
+    html.Div([
+        html.H2("ðŸ‘¥ Labor Modeling", style={'color': '#2980b9'}),
+        html.Div([
+            html.Div([html.Label("Wage:"), dcc.Dropdown(id='wage-col')], style={'flex': '1'}),
+            html.Div([html.Label("Start Time:"), dcc.Dropdown(id='start-time-col')], style={'flex': '1'}),
+            html.Div([html.Label("End Time:"), dcc.Dropdown(id='end-time-col')], style={'flex': '1'}),
+            html.Button("ðŸ“¥ Export CSV", id="btn-download-labor", style={'marginTop': '25px', 'flex': '0.5'})
+        ], style={'display': 'flex', 'gap': '20px'}),
+
+        # NEW: Labor KPI Panel
+        html.Div(id='labor-kpi-panel',
+                 style={'display': 'grid', 'gridTemplateColumns': 'repeat(3, 1fr)', 'gap': '20px', 'margin': '20px 0'}),
+
+        dcc.Graph(id='hourly-labor-graph', style={'height': '400px'}),
+        dcc.Graph(id='s-l-ratio-graph', style={'height': '300px'}),
+        dcc.Download(id="download-labor-csv")
+    ], style={'padding': '30px', 'margin': '20px auto', 'maxWidth': '1400px', 'backgroundColor': '#fff',
+              'borderRadius': '15px', 'boxShadow': '0 10px 30px rgba(0,0,0,0.1)'}),
+
+    html.Div([
+        html.H2("ðŸ“¦ VRS Predictive Inventory", style={'color': '#c0392b'}),
+        html.Div([
+            html.Div([html.Label("Stock:"), dcc.Dropdown(id='inv-stock-col')], style={'flex': '1'}),
+            html.Div([html.Label("Item:"), dcc.Dropdown(id='inv-name-col')], style={'flex': '1'}),
+            html.Div([html.Label("Usage:"), dcc.Dropdown(id='sales-qty-col')], style={'flex': '1'})
+        ], style={'display': 'flex', 'gap': '20px'}),
+        html.Div(id='inventory-metrics-cards',
+                 style={'display': 'flex', 'justifyContent': 'space-around', 'marginTop': '15px'}),
+        dcc.Graph(id='inventory-status-graph', style={'height': '400px'}),
+        html.Div(id='inventory-detail-table')
+    ], style={'padding': '30px', 'margin': '20px auto', 'maxWidth': '1400px', 'backgroundColor': '#fff',
+              'borderRadius': '15px', 'boxShadow': '0 10px 30px rgba(0,0,0,0.1)'})
+], style={'fontFamily': 'Inter, sans-serif', 'backgroundColor': '#f1f2f6', 'paddingBottom': '100px'})
+
+
+# --- 4. Callbacks ---
+@app.callback(
+    [Output('stored-labor-data', 'data'), Output('stored-sales-data', 'data'), Output('stored-inventory-data', 'data')],
+    [Input('upload-data', 'contents'), Input('reset-btn', 'n_clicks')],
+    [State('upload-data', 'filename'), State('stored-labor-data', 'data'), State('stored-sales-data', 'data'),
+     State('stored-inventory-data', 'data')]
+)
+def handle_persistent_uploads(contents, reset, names, labor_js, sales_js, inv_js):
+    if callback_context.triggered_id == 'reset-btn': return None, None, None
+    if not contents: raise exceptions.PreventUpdate
+    labor_dfs, sales_dfs, inv_dfs = [], [], []
+    for c, n in zip(contents, names):
+        parsed = parse_contents(c, n)
+        if parsed:
+            new_df = safe_load_df(parsed)
+            fn = n.lower()
+            if any(k in fn for k in ['labor', 'wage']):
+                labor_dfs.append(new_df)
+            elif any(k in fn for k in ['inv', 'stock']):
+                inv_dfs.append(new_df)
+            else:
+                sales_dfs.append(new_df)
+    res_l = pd.concat(labor_dfs, ignore_index=True).to_json(date_format='iso',
+                                                            orient='split') if labor_dfs else labor_js
+    res_s = pd.concat(sales_dfs, ignore_index=True).to_json(date_format='iso',
+                                                            orient='split') if sales_dfs else sales_js
+    res_i = pd.concat(inv_dfs, ignore_index=True).to_json(date_format='iso', orient='split') if inv_dfs else inv_js
+    return res_l, res_s, res_i
+
+
+@app.callback(
+    [Output('sales-col', 'options'), Output('cust-col', 'options'), Output('wage-col', 'options'),
+     Output('inv-stock-col', 'options'), Output('inv-name-col', 'options'), Output('sales-qty-col', 'options'),
+     Output('start-time-col', 'options'), Output('end-time-col', 'options'),
+     Output('date-picker-range', 'start_date'), Output('date-picker-range', 'end_date')],
+    [Input('stored-labor-data', 'data'), Input('stored-sales-data', 'data'), Input('stored-inventory-data', 'data')]
+)
+def sync_ui(l, s, i):
+    all_dfs = [safe_load_df(d) for d in [l, s, i] if d]
+    if not all_dfs: return [[] for _ in range(8)] + [None, None]
+    combined = pd.concat(all_dfs, ignore_index=True, sort=False)
+    opts = [{'label': c, 'value': c} for c in combined.columns]
+    dt_name = find_date_col(combined)
+    start, end = None, None
+    if dt_name:
+        v = combined[dt_name].dropna()
+        if not v.empty: start, end = v.min().strftime('%Y-%m-%d'), v.max().strftime('%Y-%m-%d')
+    return opts, opts, opts, opts, opts, opts, opts, opts, start, end
+
+
+@app.callback(
+    [Output('sales-forecast-graph', 'figure'), Output('sales-trend-graph', 'figure'),
+     Output('sales-dow-graph', 'figure'), Output('sales-kpi-panel', 'children')],
+    [Input('stored-sales-data', 'data'), Input('stored-labor-data', 'data'),
+     Input('sales-col', 'value'), Input('cust-col', 'value'),
+     Input('growth-target', 'value'), Input('date-picker-range', 'start_date'), Input('date-picker-range', 'end_date'),
+     Input('wage-col', 'value')]
+)
+def update_enhanced_sales(s_js, l_js, rev, grp, target_pct, start, end, w_col):
+    if not all([s_js, rev, grp, start, end]): return [go.Figure() for _ in range(3)] + ["Configure Module"]
+    df = filter_df_by_date_range(safe_load_df(s_js), start, end)
+    df_labor = filter_df_by_date_range(safe_load_df(l_js), start, end)
+    if df.empty or rev not in df.columns: return [go.Figure() for _ in range(3)] + ["Data Error"]
+
+    df[rev] = pd.to_numeric(df[rev].astype(str).str.replace('[$,]', '', regex=True), errors='coerce').fillna(0)
+    date_c = find_date_col(df)
+    df = df.sort_values(date_c)
+    df['MA7'] = df[rev].rolling(window=7).mean()
+    df['Day'] = df[date_c].dt.day_name()
+
+    total_rev = df[rev].sum()
+    total_transactions = len(df)
+    avg_check_size = total_rev / total_transactions if total_transactions > 0 else 0
+    dow_sum = df.groupby('Day')[rev].sum().reset_index()
+    peak_day_rev = dow_sum[rev].max()
+    total_covers = total_transactions * 2
+    avg_party_size = total_covers / total_transactions if total_transactions > 0 else 0
+
+    total_labor_hours = df_labor['HoursWorked'].sum() if 'HoursWorked' in df_labor.columns else 0
+    sales_per_labor_hour = total_rev / total_labor_hours if total_labor_hours > 0 else 0
+    covers_per_labor_hour = total_covers / total_labor_hours if total_labor_hours > 0 else 0
+
+    total_days = (pd.to_datetime(end) - pd.to_datetime(start)).days + 1
+    available_seat_hours = 50 * 10 * total_days
+    revpash = total_rev / available_seat_hours if available_seat_hours > 0 else 0
+
+    total_labor_cost = 0
+    if w_col and w_col in df_labor.columns:
+        df_labor[w_col] = pd.to_numeric(df_labor[w_col].astype(str).str.replace('[$,]', '', regex=True),
+                                        errors='coerce').fillna(0)
+        total_labor_cost = df_labor[w_col].sum()
+    prime_cost_pct = ((total_labor_cost + (total_rev * 0.30)) / total_rev * 100) if total_rev > 0 else 0
+
+    def make_kpi(title, val, color, desc):
+        return html.Div([
+            html.P(title, style={'color': '#7f8c8d', 'fontSize': '12px', 'margin': '0', 'textTransform': 'uppercase'}),
+            html.Div([
+                html.H3(val, style={'margin': '5px 0', 'color': color, 'fontWeight': '700'}),
+                html.Span(" â“˜", title=desc,
+                          style={'cursor': 'help', 'color': '#7f8c8d', 'fontSize': '14px', 'marginLeft': '5px'})
+            ], style={'display': 'flex', 'alignItems': 'center'})
+        ], style={'padding': '20px', 'backgroundColor': '#fff', 'borderLeft': f'5px solid {color}',
+                  'boxShadow': '0 2px 4px rgba(0,0,0,0.05)'})
+
+    kpis = [
+        make_kpi("Gross Rev", f"${total_rev:,.0f}", "#27ae60", "Total revenue."),
+        make_kpi("Avg Check", f"${avg_check_size:,.2f}", "#2980b9", "Avg value per transaction."),
+        make_kpi("Avg Party", f"{avg_party_size:,.1f}", "#e67e22", "Avg guests per transaction."),
+        make_kpi("Peak Rev", f"${peak_day_rev:,.0f}", "#2c3e50", "Highest single day revenue."),
+        make_kpi("SPLH", f"${sales_per_labor_hour:,.0f}", "#9b59b6", "Sales per labor hour."),
+        make_kpi("CPLH", f"{covers_per_labor_hour:,.1f}", "#f1c40f", "Covers per labor hour."),
+        make_kpi("RevPASH", f"${revpash:,.2f}", "#1abc9c", "Revenue per available seat hour (Seat Utility)."),
+        make_kpi("Prime Cost %", f"{prime_cost_pct:.1f}%", "#c0392b", "Labor + COGS as % of Sales (Benchmark: 60%).")
+    ]
+
+    fig_t = go.Figure()
+    fig_t.add_trace(go.Scatter(x=df[date_c], y=df[rev], name="Daily Revenue", line=dict(color='#dfe6e9'),
+                               hovertemplate="Daily Rev: $%{y:,.2f}<extra></extra>"))
+    fig_t.add_trace(go.Scatter(x=df[date_c], y=df['MA7'], name="7D Moving Avg", line=dict(color='#27ae60', width=3),
+                               hovertemplate="7D MA: $%{y:,.2f}<extra></extra>"))
+    fig_t.update_layout(template="simple_white", height=350, margin=dict(l=0, r=0, t=10, b=0), yaxis_tickprefix='$',
+                        hovermode="x unified")
+
+    dow_avg = df.groupby('Day')[rev].mean().reindex(
+        ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']).reset_index()
+    fig_dow = px.bar(dow_avg, x='Day', y=rev, color_discrete_sequence=['#2c3e50'], text_auto='.2s')
+    fig_dow.update_traces(hovertemplate="Day: %{x}<br>Avg: $%{y:,.2f}<extra></extra>")
+    fig_dow.update_layout(template="simple_white", height=350, margin=dict(l=0, r=0, t=10, b=0))
+
+    days_idx = (df[date_c] - df[date_c].min()).dt.days
+    slope, inter = np.polyfit(days_idx, df[rev], 1)
+    f_days = np.array(range(max(days_idx), max(days_idx) + 30))
+    f_rev = slope * f_days + inter
+    fig_f = go.Figure()
+    fig_f.add_trace(go.Scatter(x=df[date_c], y=df[rev], name="Historical", line=dict(color='#bdc3c7'),
+                               hovertemplate="Actual: $%{y:,.2f}<extra></extra>"))
+    fig_f.add_trace(go.Scatter(x=pd.date_range(df[date_c].max(), periods=30), y=f_rev, name="Forecast",
+                               line=dict(dash='dash', color='#e67e22'),
+                               hovertemplate="Projected: $%{y:,.2f}<extra></extra>"))
+    fig_f.update_layout(template="simple_white", height=300, margin=dict(l=10, r=10, t=10, b=10), yaxis_tickprefix='$',
+                        hovermode="x unified")
+    return fig_f, fig_t, fig_dow, kpis
+
+
+@app.callback(
+    [Output('hourly-labor-graph', 'figure'), Output('s-l-ratio-graph', 'figure'),
+     Output('download-labor-csv', 'data'), Output('labor-kpi-panel', 'children')],
+    [Input('stored-labor-data', 'data'), Input('stored-sales-data', 'data'),
+     Input('wage-col', 'value'), Input('sales-col', 'value'), Input('btn-download-labor', 'n_clicks'),
+     Input('date-picker-range', 'start_date'), Input('date-picker-range', 'end_date'),
+     Input('start-time-col', 'value'), Input('end-time-col', 'value')]
+)
+def update_labor(l_js, s_js, w_col, r_col, n_clicks, start, end, st_col, et_col):
+    if not all([l_js, s_js, w_col, r_col, start, end, st_col, et_col]): return go.Figure(), go.Figure(), None, []
+    l_df = filter_df_by_date_range(safe_load_df(l_js), start, end)
+    s_df = filter_df_by_date_range(safe_load_df(s_js), start, end)
+    dist = distribute_wages_vectorized(l_df, w_col, st_col, et_col)
+    h_labels = {h: f"{h % 12 or 12} {'AM' if h < 12 else 'PM'}" for h in range(24)}
+    dist['Time'] = dist['Hour'].map(h_labels)
+    fig_h = px.bar(dist, x='Time', y='Spent', title="Hourly Spend Breakdown", text_auto='.2s',
+                   color_discrete_sequence=['#2980b9'])
+    fig_h.update_traces(hovertemplate="Time: %{x}<br>Spent: $%{y:,.2f}<extra></extra>")
+
+    s_df[r_col] = pd.to_numeric(s_df[r_col].astype(str).str.replace('[$,]', '', regex=True), errors='coerce').fillna(0)
+    l_df[w_col] = pd.to_numeric(l_df[w_col].astype(str).str.replace('[$,]', '', regex=True), errors='coerce').fillna(0)
+    ratio = (l_df[w_col].sum() / s_df[r_col].sum() * 100) if s_df[r_col].sum() > 0 else 0
+
+    # FIXED: Gauge chart config
+    fig_r = go.Figure(go.Indicator(
+        mode="gauge+number", value=ratio, title={'text': "Labor Cost %"},
+        number={'suffix': "%"}, gauge={'axis': {'range': [0, 100]}, 'bar': {'color': "#2c3e50"}}
+    ))
+
+    # --- Labor KPI Calculations integrated here ---
+    def make_kpi(title, val, color, desc):
+        return html.Div([
+            html.P(title, style={'color': '#7f8c8d', 'fontSize': '12px', 'margin': '0', 'textTransform': 'uppercase'}),
+            html.Div([
+                html.H3(val, style={'margin': '5px 0', 'color': color, 'fontWeight': '700'}),
+                html.Span(" â“˜", title=desc,
+                          style={'cursor': 'help', 'color': '#7f8c8d', 'fontSize': '14px', 'marginLeft': '5px'})
+            ], style={'display': 'flex', 'alignItems': 'center'})
+        ], style={'padding': '20px', 'backgroundColor': '#fff', 'borderLeft': f'5px solid {color}',
+                  'boxShadow': '0 2px 4px rgba(0,0,0,0.05)'})
+
+    TOTAL_SEATS = 50
+    HOURS_OPEN_PER_DAY = 10
+    total_days = (pd.to_datetime(end) - pd.to_datetime(start)).days + 1
+
+    total_transactions = len(s_df)
+    ttr = total_transactions / (TOTAL_SEATS * total_days) if total_days > 0 else 0
+
+    if 'Status' in l_df.columns:
+        employees_left = len(l_df[l_df['Status'] == 'Terminated'])
+        avg_employees = len(l_df[l_df['Status'] == 'Active']) + employees_left
+        etr = (employees_left / avg_employees * 100) if avg_employees > 0 else 0
+    else:
+        etr = 0
+
+    total_errors = s_df['Errors'].sum() if 'Errors' in s_df.columns else 0
+    total_covers = total_transactions * 2
+    spe = total_errors / total_covers if total_covers > 0 else 0
+
+    labor_kpis = [
+        make_kpi("TTR (Tables/Day)", f"{ttr:.1f}", "#27ae60", "Table turnover rate per day."),
+        make_kpi("ETR % (Est)", f"{etr:.1f}%", "#e74c3c", "Employee turnover rate (Estimated)."),
+        make_kpi("SPE (Errors/Guest)", f"{spe:.2f}", "#f1c40f", "Server errors per guest served (Quality Control).")
+    ]
+
+    csv = dcc.send_data_frame(l_df.to_csv, "StockPilot_Labor_2026.csv") if n_clicks else None
+    # Returns the graphs, the download object, AND the list of new KPI cards
+    return fig_h, fig_r, csv, labor_kpis
+
+
+@app.callback(
+    [Output('inventory-status-graph', 'figure'), Output('inventory-detail-table', 'children'),
+     Output('inventory-metrics-cards', 'children')],
+    [Input('stored-inventory-data', 'data'), Input('stored-sales-data', 'data'),
+     Input('inv-stock-col', 'value'), Input('inv-name-col', 'value'), Input('sales-qty-col', 'value'),
+     Input('date-picker-range', 'start_date'), Input('date-picker-range', 'end_date')]
+)
+def update_inventory(i_js, s_js, stock, name, qty, start, end):
+    if not all([i_js, s_js, stock, name, qty, start, end]): return go.Figure(), "", ""
+    df_i, df_s = safe_load_df(i_js), filter_df_by_date_range(safe_load_df(s_js), start, end)
+    days = (pd.to_datetime(end) - pd.to_datetime(start)).days or 1
+    usage = df_s.groupby(name)[qty].sum() / days
+    vrs = pd.merge(df_i, usage.reset_index(name='Rate'), on=name, how='left').fillna(0)
+    vrs['DaysLeft'] = np.where(vrs['Rate'] > 0, (vrs[stock] / vrs['Rate']).round(1), 99)
+    fig = px.bar(vrs, x=name, y='DaysLeft', color='DaysLeft', color_continuous_scale='RdYlGn', title="Inventory Runway")
+    fig.update_traces(hovertemplate="Item: %{x}<br>Days Left: %{y:.1f}<extra></extra>")
+    table = dash_table.DataTable(vrs.to_dict('records'), page_size=10, style_table={'overflowX': 'auto'})
+    metrics = html.H4(f"Critical Items (<3 days): {len(vrs[vrs['DaysLeft'] < 3])}", style={'color': '#c0392b'})
+    return fig, table, metrics
+
+
+if __name__ == '__main__': app.run(debug=True)
+
+
+================================================
+FILE: StockPilotDev_Inventory_Dashboard.html
+================================================
+Error reading file with 'cp1252': 'charmap' codec can't decode byte 0x8d in position 4781770: character maps to <undefined>
+
+
+================================================
+FILE: StockPilotDev_Master_Dashboard.html
+================================================
+Error reading file with 'cp1252': 'charmap' codec can't decode byte 0x8d in position 4781770: character maps to <undefined>
+
+
+================================================
+FILE: data/2025-12-29 StockPilotDev_SalesModel_Test.csv
+================================================
+ï»¿Item Name,Selling Price,Cost of Goods Sold,Quantity Sold
+Burger,15,4.5,120
+Fries,5,1,110
+Lobster Roll,32,18,40
+Soda,3,0.25,150
+Side Salad,6,2.5,30
+Filet Mignon,45,22,50
+Fish Tacos,14,5,70
+Brownie,7,1.5,85
+
+
+
+================================================
+FILE: data/2025-12-29 StockPilotDev_SalesModel_v01.xlsx
+================================================
+[Binary file]
+
+
+================================================
+FILE: data/2025-12-29_StockPilotDev_Labor Test CSV.csv
+================================================
+ï»¿Date,Employee,Role,Start Time,End Time,Hourly Rate,Total Hours,Gross Wages,Burdened Cost,restaurant_name
+12/29/2026,EMP009,Manager,9:00 AM,5:00 PM,$30.00 ,8,240.00,$288.00 ,The Gourmet Grill
+12/29/2026,EMP010,Prep Cook,9:00 AM,3:00 PM,$16.00 ,6,96.00,$115.20 ,The Gourmet Grill
+12/29/2026,EMP011,Server,11:00 AM,3:00 PM,$12.00 ,4,48.00,$57.60 ,Pasta Paradise
+12/29/2026,EMP012,Dishwasher,3:00 PM,9:00 PM,$15.50 ,6,93.00,$111.60 ,Burger Joint
+12/29/2026,EMP001,Server (FOH),4:00 PM,10:00 PM,$15.00 ,6,90.00,$108.00 ,The Gourmet Grill
+12/29/2026,EMP002,Line Cook (BOH),3:00 PM,11:00 PM,$22.00 ,8,176.00,$211.20 ,Pizza Palace
+12/29/2026,EMP004,Bartender,5:00 PM,11:59 PM,$12.00 ,6.983333333,83.80,$100.56 ,Pasta Paradise
+12/29/2026,EMP005,Dishwasher,4:30 PM,11:30 PM,$15.50 ,7,108.50,$130.20 ,Sushi Haven
+11/15/2026,EMP009,Manager,9:00 AM,5:00 PM,$30.00 ,8,240.00,$288.00 ,Burger Joint
+11/15/2026,EMP010,Prep Cook,9:00 AM,3:00 PM,$16.00 ,6,96.00,$115.20 ,Pasta Paradise
+11/15/2026,EMP011,Server,11:00 AM,3:00 PM,$12.00 ,4,48.00,$57.60 ,Burger Joint
+11/15/2026,EMP012,Dishwasher,3:00 PM,9:00 PM,$15.50 ,6,93.00,$111.60 ,Sushi Haven
+11/15/2026,EMP001,Server (FOH),4:00 PM,10:00 PM,$15.00 ,6,90.00,$108.00 ,Sushi Haven
+11/15/2026,EMP002,Line Cook (BOH),3:00 PM,11:00 PM,$22.00 ,8,176.00,$211.20 ,Pasta Paradise
+11/15/2026,EMP004,Bartender,5:00 PM,11:59 PM,$12.00 ,6.983333333,83.80,$100.56 ,Burger Joint
+11/15/2026,EMP005,Dishwasher,4:30 PM,11:30 PM,$15.50 ,7,108.50,$130.20 ,Pizza Palace
+10/12/2026,EMP009,Manager,9:00 AM,5:00 PM,$30.00 ,8,240.00,$288.00 ,Burger Joint
+10/12/2026,EMP010,Prep Cook,9:00 AM,3:00 PM,$16.00 ,6,96.00,$115.20 ,Pasta Paradise
+10/12/2026,EMP011,Server,11:00 AM,3:00 PM,$12.00 ,4,48.00,$57.60 ,Pasta Paradise
+10/12/2026,EMP012,Dishwasher,3:00 PM,9:00 PM,$15.50 ,6,93.00,$111.60 ,Sushi Haven
+10/12/2026,EMP001,Server (FOH),4:00 PM,10:00 PM,$15.00 ,6,90.00,$108.00 ,Sushi Haven
+10/12/2026,EMP002,Line Cook (BOH),3:00 PM,11:00 PM,$22.00 ,8,176.00,$211.20 ,Sushi Haven
+10/12/2026,EMP004,Bartender,5:00 PM,11:59 PM,$12.00 ,6.983333333,83.80,$100.56 ,Pizza Palace
+10/12/2026,EMP005,Dishwasher,4:30 PM,11:30 PM,$15.50 ,7,108.50,$130.20 ,The Gourmet Grill
+
+
+
+================================================
+FILE: data/2025-12-29_StockPilotDev_LaborModel_v01.xlsx
+================================================
+[Binary file]
+
+
+================================================
+FILE: data/synthetic_inventory_data_2026-01-06.csv
+================================================
+item_id,item_name,category,quantity,unit,purchase_date,expiration_date,unit_cost,supplier,storage_location
+INV0001,Lettuce,Produce,36,bottle,2026-02-14T00:00:00,2026-02-18T00:00:00,12.16,Beverage Best,Pantry Shelf
+INV0002,Milk,Meat,64,bag,2026-04-04T00:00:00,2026-05-15T00:00:00,44.78,Fresh Farms Co.,Dry Storage
+INV0003,Paprika,Condiments,95,liter,2026-08-16T00:00:00,2026-10-01T00:00:00,9.62,Beverage Best,Dry Storage
+INV0004,Tomato,Seafood,89,bag,2026-08-13T00:00:00,2026-10-11T00:00:00,11.05,Beverage Best,Freezer
+INV0005,Garlic,Spices,13,bottle,2026-10-10T00:00:00,2026-11-21T00:00:00,13.92,Beverage Best,Freezer
+INV0006,Coffee Beans,Meat,18,liter,2026-07-27T00:00:00,2026-10-01T00:00:00,15.56,Foodie Distributors,Pantry Shelf
+INV0007,Vinegar,Seafood,21,bottle,2026-10-26T00:00:00,2026-12-11T00:00:00,25.97,Gourmet Goods Inc.,Dry Storage
+INV0008,Butter,Meat,65,pcs,2026-11-28T00:00:00,2027-01-09T00:00:00,35.82,Fresh Farms Co.,Walk-in Cooler
+INV0009,Soda,Beverages,8,can,2026-11-14T00:00:00,2027-02-12T00:00:00,46.35,Beverage Best,Dry Storage
+INV0010,Paprika,Condiments,48,g,2026-11-06T00:00:00,2027-01-29T00:00:00,4.88,Foodie Distributors,Pantry Shelf
+INV0011,Butter,Spices,85,kg,2026-06-30T00:00:00,2026-08-17T00:00:00,47.74,Foodie Distributors,Pantry Shelf
+INV0012,Salmon Fillet,Condiments,43,box,2026-01-11T00:00:00,2026-03-18T00:00:00,46.11,Foodie Distributors,Dry Storage
+INV0013,Salmon Fillet,Beverages,53,dozen,2026-10-10T00:00:00,2026-11-04T00:00:00,3.17,Fresh Farms Co.,Walk-in Cooler
+INV0014,Cheese,Seafood,85,can,2026-03-06T00:00:00,2026-03-26T00:00:00,18.34,Beverage Best,Walk-in Cooler
+INV0015,Mustard,Pantry,27,g,2026-09-15T00:00:00,2026-11-17T00:00:00,40.75,Beverage Best,Pantry Shelf
+INV0016,Tea Bags,Beverages,19,g,2026-08-08T00:00:00,2026-09-05T00:00:00,30.77,Gourmet Goods Inc.,Freezer
+INV0017,Butter,Beverages,23,g,2026-09-11T00:00:00,2026-11-20T00:00:00,39.07,Foodie Distributors,Pantry Shelf
+INV0018,Beer,Dairy & Eggs,50,liter,2026-02-21T00:00:00,2026-03-12T00:00:00,36.09,Foodie Distributors,Walk-in Cooler
+INV0019,Bread,Dairy & Eggs,51,ml,2026-05-08T00:00:00,2026-05-28T00:00:00,25.09,Foodie Distributors,Dry Storage
+INV0020,Rice,Produce,43,pcs,2026-01-04T00:00:00,2026-03-27T00:00:00,2.54,Fresh Farms Co.,Dry Storage
+INV0021,Lettuce,Meat,99,ml,2026-06-17T00:00:00,2026-08-15T00:00:00,29.42,Beverage Best,Walk-in Cooler
+INV0022,Ketchup,Beverages,51,box,2026-09-03T00:00:00,2026-11-25T00:00:00,2.9,Fresh Farms Co.,Freezer
+INV0023,Pork Loin,Spices,69,ml,2026-04-21T00:00:00,2026-07-12T00:00:00,30.38,Fresh Farms Co.,Freezer
+INV0024,Mayonnaise,Spices,41,ml,2026-03-24T00:00:00,2026-05-31T00:00:00,40.12,Fresh Farms Co.,Walk-in Cooler
+INV0025,Mayonnaise,Seafood,72,bottle,2026-10-13T00:00:00,2026-10-26T00:00:00,29.46,Fresh Farms Co.,Walk-in Cooler
+INV0026,Beef Sirloin,Dairy & Eggs,11,liter,2026-05-28T00:00:00,2026-06-02T00:00:00,49.85,Beverage Best,Dry Storage
+INV0027,Salmon Fillet,Meat,80,bottle,2026-03-12T00:00:00,2026-05-03T00:00:00,23.07,Foodie Distributors,Freezer
+INV0028,Carrot,Seafood,88,bag,2026-12-20T00:00:00,2027-02-20T00:00:00,37.57,Beverage Best,Freezer
+INV0029,Lettuce,Pantry,85,box,2026-06-14T00:00:00,2026-08-26T00:00:00,33.53,Foodie Distributors,Freezer
+INV0030,Onion,Pantry,52,box,2026-09-11T00:00:00,2026-10-19T00:00:00,49.58,Fresh Farms Co.,Freezer
+INV0031,Potato,Beverages,23,bottle,2026-11-26T00:00:00,2026-12-23T00:00:00,35.8,Gourmet Goods Inc.,Walk-in Cooler
+INV0032,Butter,Spices,49,liter,2026-01-08T00:00:00,2026-03-03T00:00:00,8.62,Fresh Farms Co.,Pantry Shelf
+INV0033,Cumin,Condiments,38,dozen,2026-04-22T00:00:00,2026-06-12T00:00:00,47.8,Foodie Distributors,Pantry Shelf
+INV0034,Chicken Breast,Beverages,47,dozen,2026-02-20T00:00:00,2026-05-14T00:00:00,33.55,Gourmet Goods Inc.,Dry Storage
+INV0035,Potato,Dairy & Eggs,72,liter,2026-07-20T00:00:00,2026-10-13T00:00:00,3.44,Beverage Best,Pantry Shelf
+INV0036,Ginger,Dairy & Eggs,7,box,2026-10-27T00:00:00,2027-01-14T00:00:00,33.05,Fresh Farms Co.,Pantry Shelf
+INV0037,Mustard,Seafood,66,dozen,2026-08-05T00:00:00,2026-09-09T00:00:00,44.21,Gourmet Goods Inc.,Pantry Shelf
+INV0038,Ginger,Pantry,94,liter,2026-10-31T00:00:00,2026-11-28T00:00:00,29.06,Fresh Farms Co.,Freezer
+INV0039,Salt,Seafood,77,ml,2026-02-14T00:00:00,2026-02-22T00:00:00,18.02,Foodie Distributors,Freezer
+INV0040,Vinegar,Dairy & Eggs,62,liter,2026-04-08T00:00:00,2026-04-11T00:00:00,41.14,Fresh Farms Co.,Walk-in Cooler
+INV0041,Rice,Meat,87,liter,2026-02-04T00:00:00,2026-05-02T00:00:00,39.23,Foodie Distributors,Walk-in Cooler
+INV0042,Apple Juice,Produce,29,ml,2026-01-30T00:00:00,2026-02-24T00:00:00,27.44,Beverage Best,Walk-in Cooler
+INV0043,Soda,Seafood,38,bag,2026-03-05T00:00:00,2026-05-26T00:00:00,8.14,Fresh Farms Co.,Dry Storage
+INV0044,Rice,Pantry,84,bag,2026-10-24T00:00:00,2026-12-15T00:00:00,12.92,Gourmet Goods Inc.,Pantry Shelf
+INV0045,Mayonnaise,Seafood,33,dozen,2026-08-26T00:00:00,2026-09-01T00:00:00,37.05,Fresh Farms Co.,Walk-in Cooler
+INV0046,Pasta,Meat,29,kg,2026-04-29T00:00:00,2026-07-02T00:00:00,40.4,Fresh Farms Co.,Pantry Shelf
+INV0047,Cheese,Pantry,79,pcs,2026-11-14T00:00:00,2026-11-20T00:00:00,14.32,Foodie Distributors,Dry Storage
+INV0048,Tomato,Meat,23,ml,2026-10-04T00:00:00,2026-12-02T00:00:00,18.72,Beverage Best,Freezer
+INV0049,Paprika,Produce,3,box,2026-10-20T00:00:00,2026-10-28T00:00:00,4.34,Gourmet Goods Inc.,Freezer
+INV0050,Flour,Condiments,93,bag,2026-08-18T00:00:00,2026-09-17T00:00:00,35.82,Foodie Distributors,Freezer
+INV0051,Potato,Spices,45,kg,2026-03-29T00:00:00,2026-05-19T00:00:00,0.68,Gourmet Goods Inc.,Freezer
+INV0052,Black Pepper,Pantry,8,liter,2026-02-21T00:00:00,2026-04-22T00:00:00,2.8,Gourmet Goods Inc.,Dry Storage
+INV0053,Vinegar,Pantry,86,bottle,2026-03-29T00:00:00,2026-04-10T00:00:00,0.72,Gourmet Goods Inc.,Walk-in Cooler
+INV0054,Tomato,Seafood,29,ml,2026-05-14T00:00:00,2026-05-23T00:00:00,32.44,Foodie Distributors,Pantry Shelf
+INV0055,Black Pepper,Produce,2,box,2026-11-03T00:00:00,2026-11-23T00:00:00,21.16,Beverage Best,Walk-in Cooler
+INV0056,Beer,Spices,50,ml,2026-08-10T00:00:00,2026-10-03T00:00:00,15.23,Foodie Distributors,Walk-in Cooler
+INV0057,Ginger,Pantry,65,pcs,2026-04-24T00:00:00,2026-06-04T00:00:00,45.68,Foodie Distributors,Walk-in Cooler
+INV0058,Olive Oil,Produce,20,kg,2026-04-26T00:00:00,2026-07-06T00:00:00,10.04,Fresh Farms Co.,Dry Storage
+INV0059,Flour,Pantry,52,g,2026-06-09T00:00:00,2026-08-11T00:00:00,19.77,Gourmet Goods Inc.,Pantry Shelf
+INV0060,Sugar,Produce,85,pcs,2026-09-09T00:00:00,2026-10-15T00:00:00,47.05,Foodie Distributors,Walk-in Cooler
+INV0061,Tomato,Condiments,37,ml,2026-10-10T00:00:00,2026-11-21T00:00:00,21.64,Foodie Distributors,Dry Storage
+INV0062,Cumin,Seafood,72,g,2026-02-21T00:00:00,2026-02-24T00:00:00,27.96,Beverage Best,Dry Storage
+INV0063,Tea Bags,Dairy & Eggs,27,pcs,2026-08-20T00:00:00,2026-09-20T00:00:00,4.48,Foodie Distributors,Dry Storage
+INV0064,Orange Juice,Condiments,47,bottle,2026-05-22T00:00:00,2026-06-11T00:00:00,39.61,Beverage Best,Pantry Shelf
+INV0065,Cumin,Beverages,99,box,2026-03-05T00:00:00,2026-04-01T00:00:00,21.43,Gourmet Goods Inc.,Walk-in Cooler
+INV0066,Rice,Produce,6,can,2026-10-06T00:00:00,2026-10-27T00:00:00,40.13,Foodie Distributors,Pantry Shelf
+INV0067,Mustard,Meat,60,pcs,2026-12-07T00:00:00,2027-02-20T00:00:00,13.06,Gourmet Goods Inc.,Dry Storage
+INV0068,Shrimp,Dairy & Eggs,45,can,2026-01-22T00:00:00,2026-03-21T00:00:00,21.41,Fresh Farms Co.,Freezer
+INV0069,Cheese,Spices,44,dozen,2026-04-03T00:00:00,2026-06-11T00:00:00,39.43,Gourmet Goods Inc.,Pantry Shelf
+INV0070,Sugar,Meat,83,bag,2026-01-27T00:00:00,2026-03-11T00:00:00,48.71,Fresh Farms Co.,Freezer
+INV0071,Apple Juice,Beverages,18,liter,2026-01-30T00:00:00,2026-02-25T00:00:00,3.45,Fresh Farms Co.,Dry Storage
+INV0072,Broccoli,Condiments,65,pcs,2026-02-13T00:00:00,2026-05-12T00:00:00,40.72,Foodie Distributors,Freezer
+INV0073,Beef Sirloin,Beverages,25,bag,2026-03-26T00:00:00,2026-05-01T00:00:00,15.38,Foodie Distributors,Walk-in Cooler
+INV0074,Salt,Meat,27,bag,2026-05-29T00:00:00,2026-07-07T00:00:00,27.76,Gourmet Goods Inc.,Walk-in Cooler
+INV0075,Flour,Seafood,7,bag,2026-07-22T00:00:00,2026-10-03T00:00:00,14.86,Foodie Distributors,Pantry Shelf
+INV0076,Mushroom,Dairy & Eggs,44,g,2026-09-29T00:00:00,2026-12-28T00:00:00,30.87,Gourmet Goods Inc.,Dry Storage
+INV0077,Apple Juice,Condiments,29,kg,2026-03-14T00:00:00,2026-04-27T00:00:00,18.01,Foodie Distributors,Dry Storage
+INV0078,Soy Sauce,Produce,95,kg,2026-11-24T00:00:00,2026-12-01T00:00:00,17.01,Foodie Distributors,Pantry Shelf
+INV0079,Soda,Pantry,44,ml,2026-01-14T00:00:00,2026-02-21T00:00:00,2.38,Foodie Distributors,Dry Storage
+INV0080,Coffee Beans,Beverages,36,kg,2026-05-03T00:00:00,2026-05-08T00:00:00,7.77,Beverage Best,Walk-in Cooler
+INV0081,Butter,Spices,19,pcs,2026-06-09T00:00:00,2026-06-26T00:00:00,45.9,Beverage Best,Walk-in Cooler
+INV0082,Beer,Pantry,6,box,2026-05-23T00:00:00,2026-06-24T00:00:00,49.91,Gourmet Goods Inc.,Freezer
+INV0083,Rice,Seafood,25,box,2026-08-15T00:00:00,2026-10-18T00:00:00,39.14,Fresh Farms Co.,Pantry Shelf
+INV0084,Salt,Meat,31,pcs,2026-05-17T00:00:00,2026-06-27T00:00:00,14.7,Gourmet Goods Inc.,Dry Storage
+INV0085,Black Pepper,Condiments,9,liter,2026-07-30T00:00:00,2026-09-12T00:00:00,20.42,Gourmet Goods Inc.,Pantry Shelf
+INV0086,Carrot,Produce,84,dozen,2026-01-04T00:00:00,2026-01-19T00:00:00,37.11,Fresh Farms Co.,Pantry Shelf
+INV0087,Black Pepper,Pantry,74,liter,2026-11-01T00:00:00,2026-12-15T00:00:00,48.44,Foodie Distributors,Pantry Shelf
+INV0088,Tea Bags,Pantry,37,g,2026-11-25T00:00:00,2027-01-16T00:00:00,23.05,Foodie Distributors,Walk-in Cooler
+INV0089,Paprika,Produce,27,liter,2026-03-12T00:00:00,2026-04-30T00:00:00,41.56,Beverage Best,Freezer
+INV0090,Tea Bags,Beverages,13,dozen,2026-09-05T00:00:00,2026-09-14T00:00:00,48.77,Fresh Farms Co.,Walk-in Cooler
+INV0091,Ketchup,Produce,41,ml,2026-07-09T00:00:00,2026-08-24T00:00:00,43.74,Gourmet Goods Inc.,Dry Storage
+INV0092,Pork Loin,Spices,66,pcs,2026-06-21T00:00:00,2026-09-08T00:00:00,11.74,Foodie Distributors,Pantry Shelf
+INV0093,Beef Sirloin,Meat,85,bottle,2026-04-14T00:00:00,2026-04-23T00:00:00,0.9,Beverage Best,Pantry Shelf
+INV0094,Orange Juice,Dairy & Eggs,97,ml,2026-12-08T00:00:00,2027-01-27T00:00:00,24.86,Gourmet Goods Inc.,Walk-in Cooler
+INV0095,Garlic,Condiments,24,box,2026-08-26T00:00:00,2026-10-25T00:00:00,26.8,Gourmet Goods Inc.,Pantry Shelf
+INV0096,Paprika,Seafood,44,pcs,2026-03-16T00:00:00,2026-03-17T00:00:00,10.46,Beverage Best,Pantry Shelf
+INV0097,Cheese,Seafood,98,kg,2026-06-27T00:00:00,2026-07-16T00:00:00,14.59,Gourmet Goods Inc.,Freezer
+INV0098,Mayonnaise,Produce,60,liter,2026-10-08T00:00:00,2026-11-13T00:00:00,38.38,Foodie Distributors,Freezer
+INV0099,Carrot,Produce,9,g,2026-01-06T00:00:00,2026-02-17T00:00:00,23.78,Fresh Farms Co.,Freezer
+INV0100,Pasta,Condiments,2,pcs,2026-11-09T00:00:00,2027-01-15T00:00:00,16.21,Foodie Distributors,Walk-in Cooler
+
+
+================================================
+FILE: data/synthetic_sales_data_2026-01-04.csv
+================================================
+customer_id,order_id,Date,restaurant_name,item_name,quantity,price_per_item,total_price,payment_method
+CUST0038,ORD00001,12/30/26,The Gourmet Grill,Caesar Salad,1,9.99,9.99,Credit Card
+CUST0045,ORD00002,9/18/26,The Gourmet Grill,Water,3,1.5,4.50,Credit Card
+CUST0048,ORD00003,3/17/26,Pasta Paradise,Burger,1,12.5,12.50,Credit Card
+CUST0026,ORD00004,11/5/26,Burger Joint,Fries,1,4.5,4.50,Cash
+CUST0036,ORD00005,2/14/26,The Gourmet Grill,Chicken Sandwich,2,10.99,21.98,Credit Card
+CUST0026,ORD00006,12/24/26,Pizza Palace,Pasta Carbonara,1,15.75,15.75,Mobile Pay
+CUST0020,ORD00007,12/25/26,Pasta Paradise,Fish and Chips,1,14.25,14.25,Debit Card
+CUST0043,ORD00008,3/31/26,Sushi Haven,Pasta Carbonara,1,15.75,15.75,Mobile Pay
+CUST0024,ORD00009,9/17/26,Burger Joint,Caesar Salad,3,9.99,29.97,Credit Card
+CUST0014,ORD00010,5/28/26,Pasta Paradise,Fries,3,4.5,13.50,Debit Card
+CUST0043,ORD00011,4/24/26,Burger Joint,Water,3,1.5,4.50,Credit Card
+CUST0034,ORD00012,10/23/26,Sushi Haven,Burger,1,12.5,12.50,Mobile Pay
+CUST0031,ORD00013,4/23/26,Sushi Haven,Chicken Sandwich,3,10.99,32.97,Mobile Pay
+CUST0031,ORD00014,3/19/26,Pasta Paradise,Water,2,1.5,3.00,Mobile Pay
+CUST0017,ORD00015,4/2/26,Burger Joint,Fish and Chips,1,14.25,14.25,Credit Card
+CUST0053,ORD00016,1/5/26,Pizza Palace,Soda,3,2.5,7.50,Mobile Pay
+CUST0029,ORD00017,11/26/26,Burger Joint,Taco Plate,1,11.5,11.50,Credit Card
+CUST0053,ORD00018,12/3/26,Pasta Paradise,Sushi Roll,3,16,48.00,Debit Card
+CUST0034,ORD00019,5/16/26,Pasta Paradise,Burger,3,12.5,37.50,Debit Card
+CUST0019,ORD00020,3/7/26,Sushi Haven,Burger,1,12.5,12.50,Mobile Pay
+CUST0055,ORD00021,6/25/26,Sushi Haven,Burger,3,12.5,37.50,Debit Card
+CUST0026,ORD00022,11/2/26,Sushi Haven,Soda,3,2.5,7.50,Debit Card
+CUST0034,ORD00023,7/26/26,Pizza Palace,Burger,1,12.5,12.50,Cash
+CUST0014,ORD00024,12/12/26,The Gourmet Grill,Caesar Salad,3,9.99,29.97,Debit Card
+CUST0054,ORD00025,1/7/26,Pasta Paradise,Burger,1,12.5,12.50,Credit Card
+CUST0012,ORD00026,4/1/26,Pasta Paradise,Chicken Sandwich,1,10.99,10.99,Credit Card
+CUST0023,ORD00027,6/17/26,Pizza Palace,Steak Frites,3,25,75.00,Mobile Pay
+CUST0041,ORD00028,8/5/26,Pizza Palace,Soda,2,2.5,5.00,Mobile Pay
+CUST0052,ORD00029,3/11/26,Sushi Haven,Caesar Salad,3,9.99,29.97,Credit Card
+CUST0051,ORD00030,3/16/26,Pizza Palace,Soda,1,2.5,2.50,Debit Card
+CUST0060,ORD00031,2/5/26,Burger Joint,Soda,2,2.5,5.00,Debit Card
+CUST0024,ORD00032,2/1/26,The Gourmet Grill,Fish and Chips,1,14.25,14.25,Credit Card
+CUST0051,ORD00033,1/10/26,Pizza Palace,Pizza,3,18,54.00,Mobile Pay
+CUST0049,ORD00034,2/2/26,Pasta Paradise,Caesar Salad,1,9.99,9.99,Credit Card
+CUST0038,ORD00035,4/4/26,Sushi Haven,Caesar Salad,2,9.99,19.98,Debit Card
+CUST0027,ORD00036,6/29/26,Pasta Paradise,Pasta Carbonara,1,15.75,15.75,Mobile Pay
+CUST0037,ORD00037,4/30/26,Pizza Palace,Water,3,1.5,4.50,Credit Card
+CUST0014,ORD00038,2/28/26,Burger Joint,Sushi Roll,2,16,32.00,Debit Card
+CUST0052,ORD00039,3/5/26,Pizza Palace,Soda,3,2.5,7.50,Debit Card
+CUST0056,ORD00040,5/25/26,Pasta Paradise,Chicken Sandwich,2,10.99,21.98,Credit Card
+CUST0043,ORD00041,1/23/26,Sushi Haven,Soda,2,2.5,5.00,Cash
+CUST0009,ORD00042,6/21/26,The Gourmet Grill,Soda,3,2.5,7.50,Debit Card
+CUST0042,ORD00043,4/10/26,Pasta Paradise,Chicken Sandwich,2,10.99,21.98,Debit Card
+CUST0041,ORD00044,5/1/26,Burger Joint,Burger,3,12.5,37.50,Debit Card
+CUST0001,ORD00045,9/1/26,Burger Joint,Taco Plate,2,11.5,23.00,Credit Card
+CUST0018,ORD00046,3/7/26,Sushi Haven,Chicken Sandwich,3,10.99,32.97,Credit Card
+CUST0006,ORD00047,8/7/26,Pasta Paradise,Soda,3,2.5,7.50,Debit Card
+CUST0007,ORD00048,5/24/26,Burger Joint,Soda,3,2.5,7.50,Mobile Pay
+CUST0019,ORD00049,6/28/26,Pasta Paradise,Pasta Carbonara,1,15.75,15.75,Debit Card
+CUST0017,ORD00050,7/28/26,Pizza Palace,Fries,3,4.5,13.50,Mobile Pay
+CUST0059,ORD00051,4/28/26,Burger Joint,Pizza,1,18,18.00,Debit Card
+CUST0044,ORD00052,5/29/26,Sushi Haven,Fish and Chips,2,14.25,28.50,Credit Card
+CUST0042,ORD00053,9/22/26,Burger Joint,Burger,1,12.5,12.50,Cash
+CUST0023,ORD00054,3/23/26,Pasta Paradise,Pizza,2,18,36.00,Mobile Pay
+CUST0005,ORD00055,7/4/26,The Gourmet Grill,Sushi Roll,3,16,48.00,Debit Card
+CUST0011,ORD00056,4/4/26,Sushi Haven,Caesar Salad,2,9.99,19.98,Cash
+CUST0059,ORD00057,5/25/26,Burger Joint,Sushi Roll,2,16,32.00,Mobile Pay
+CUST0007,ORD00058,4/26/26,Sushi Haven,Fries,2,4.5,9.00,Debit Card
+CUST0006,ORD00059,7/29/26,The Gourmet Grill,Soda,1,2.5,2.50,Mobile Pay
+CUST0011,ORD00060,8/15/26,Pizza Palace,Caesar Salad,1,9.99,9.99,Debit Card
+CUST0019,ORD00061,10/16/26,The Gourmet Grill,Pasta Carbonara,3,15.75,47.25,Cash
+CUST0051,ORD00062,3/12/26,Burger Joint,Burger,1,12.5,12.50,Mobile Pay
+CUST0015,ORD00063,10/16/26,Burger Joint,Pizza,3,18,54.00,Mobile Pay
+CUST0055,ORD00064,2/23/26,Pasta Paradise,Water,1,1.5,1.50,Credit Card
+CUST0025,ORD00065,1/8/26,Pasta Paradise,Chicken Sandwich,1,10.99,10.99,Debit Card
+CUST0008,ORD00066,9/13/26,Pizza Palace,Soda,2,2.5,5.00,Credit Card
+CUST0011,ORD00067,12/7/26,The Gourmet Grill,Burger,2,12.5,25.00,Cash
+CUST0019,ORD00068,11/19/26,Pasta Paradise,Fish and Chips,3,14.25,42.75,Mobile Pay
+CUST0049,ORD00069,4/17/26,Sushi Haven,Pizza,3,18,54.00,Debit Card
+CUST0045,ORD00070,5/18/26,Sushi Haven,Sushi Roll,2,16,32.00,Credit Card
+CUST0003,ORD00071,3/8/26,Pasta Paradise,Pizza,3,18,54.00,Debit Card
+CUST0055,ORD00072,6/6/26,Burger Joint,Chicken Sandwich,1,10.99,10.99,Credit Card
+CUST0041,ORD00073,10/7/26,The Gourmet Grill,Caesar Salad,3,9.99,29.97,Cash
+CUST0016,ORD00074,11/20/26,The Gourmet Grill,Steak Frites,1,25,25.00,Debit Card
+CUST0017,ORD00075,11/13/26,Pizza Palace,Burger,3,12.5,37.50,Cash
+CUST0048,ORD00076,10/22/26,Burger Joint,Fries,2,4.5,9.00,Debit Card
+CUST0029,ORD00077,7/2/26,Sushi Haven,Fish and Chips,2,14.25,28.50,Debit Card
+CUST0055,ORD00078,6/10/26,Pizza Palace,Sushi Roll,3,16,48.00,Cash
+CUST0018,ORD00079,12/14/26,The Gourmet Grill,Fries,2,4.5,9.00,Credit Card
+CUST0052,ORD00080,9/15/26,Burger Joint,Steak Frites,2,25,50.00,Cash
+CUST0016,ORD00081,3/9/26,Sushi Haven,Steak Frites,3,25,75.00,Credit Card
+CUST0001,ORD00082,4/3/26,Sushi Haven,Sushi Roll,1,16,16.00,Mobile Pay
+CUST0031,ORD00083,1/2/26,Pizza Palace,Burger,2,12.5,25.00,Debit Card
+CUST0011,ORD00084,9/22/26,Pasta Paradise,Pasta Carbonara,1,15.75,15.75,Mobile Pay
+CUST0053,ORD00085,9/14/26,Pizza Palace,Sushi Roll,1,16,16.00,Mobile Pay
+CUST0033,ORD00086,3/8/26,Pizza Palace,Pasta Carbonara,2,15.75,31.50,Mobile Pay
+CUST0055,ORD00087,9/14/26,Sushi Haven,Sushi Roll,1,16,16.00,Cash
+CUST0056,ORD00088,9/4/26,The Gourmet Grill,Taco Plate,3,11.5,34.50,Debit Card
+CUST0018,ORD00089,5/20/26,Sushi Haven,Soda,1,2.5,2.50,Mobile Pay
+CUST0041,ORD00090,3/29/26,Burger Joint,Caesar Salad,3,9.99,29.97,Debit Card
+CUST0020,ORD00091,12/22/26,Pasta Paradise,Caesar Salad,2,9.99,19.98,Mobile Pay
+CUST0040,ORD00092,9/13/26,Pizza Palace,Pizza,2,18,36.00,Cash
+CUST0050,ORD00093,7/11/26,Burger Joint,Sushi Roll,3,16,48.00,Debit Card
+CUST0016,ORD00094,10/17/26,Burger Joint,Steak Frites,2,25,50.00,Debit Card
+CUST0054,ORD00095,7/8/26,Sushi Haven,Pasta Carbonara,3,15.75,47.25,Cash
+CUST0048,ORD00096,7/7/26,Pizza Palace,Burger,2,12.5,25.00,Cash
+CUST0057,ORD00097,8/17/26,The Gourmet Grill,Pasta Carbonara,3,15.75,47.25,Cash
+CUST0020,ORD00098,11/17/26,The Gourmet Grill,Fish and Chips,3,14.25,42.75,Cash
+CUST0053,ORD00099,7/13/26,Pasta Paradise,Caesar Salad,3,9.99,29.97,Credit Card
+CUST0005,ORD00100,5/29/26,Sushi Haven,Chicken Sandwich,2,10.99,21.98,Mobile Pay
+CUST0003,ORD00101,3/20/26,Burger Joint,Fries,3,4.5,13.50,Debit Card
+CUST0043,ORD00102,6/17/26,The Gourmet Grill,Sushi Roll,3,16,48.00,Debit Card
+CUST0019,ORD00103,10/21/26,Pizza Palace,Water,3,1.5,4.50,Mobile Pay
+CUST0004,ORD00104,7/5/26,Sushi Haven,Pizza,2,18,36.00,Debit Card
+CUST0040,ORD00105,6/14/26,Sushi Haven,Burger,2,12.5,25.00,Credit Card
+CUST0031,ORD00106,3/14/26,Pizza Palace,Pizza,3,18,54.00,Mobile Pay
+CUST0028,ORD00107,9/23/26,Burger Joint,Fries,1,4.5,4.50,Debit Card
+CUST0004,ORD00108,8/15/26,Pasta Paradise,Pasta Carbonara,3,15.75,47.25,Debit Card
+CUST0046,ORD00109,10/30/26,Burger Joint,Steak Frites,2,25,50.00,Debit Card
+CUST0027,ORD00110,7/9/26,Pasta Paradise,Caesar Salad,2,9.99,19.98,Credit Card
+CUST0045,ORD00111,6/20/26,Sushi Haven,Sushi Roll,2,16,32.00,Mobile Pay
+CUST0035,ORD00112,1/25/26,Burger Joint,Taco Plate,1,11.5,11.50,Mobile Pay
+CUST0034,ORD00113,1/11/26,Pasta Paradise,Chicken Sandwich,1,10.99,10.99,Cash
+CUST0035,ORD00114,3/7/26,Pizza Palace,Taco Plate,2,11.5,23.00,Credit Card
+CUST0016,ORD00115,9/16/26,Pizza Palace,Burger,1,12.5,12.50,Cash
+CUST0037,ORD00116,11/16/26,The Gourmet Grill,Fish and Chips,2,14.25,28.50,Debit Card
+CUST0007,ORD00117,6/24/26,Pizza Palace,Burger,3,12.5,37.50,Cash
+CUST0017,ORD00118,10/22/26,The Gourmet Grill,Soda,2,2.5,5.00,Mobile Pay
+CUST0059,ORD00119,3/29/26,The Gourmet Grill,Steak Frites,1,25,25.00,Debit Card
+CUST0025,ORD00120,10/29/26,The Gourmet Grill,Pizza,2,18,36.00,Debit Card
+CUST0034,ORD00121,7/20/26,Pizza Palace,Taco Plate,3,11.5,34.50,Debit Card
+
+
+
+================================================
+FILE: PycharmProjects/setup_database/create_tables.py
+================================================
+import os
+import psycopg2
+import sys
+
+def create_tables():
+    """Connects to the PostgreSQL DB using the environment variable and creates the tables."""
+    DATABASE_URL = os.environ.get("DATABASE_URL")
+    if not DATABASE_URL:
+        print("Error: DATABASE_URL environment variable not set.")
+        sys.exit(1) # Exit if no URL is found
+
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cur = conn.cursor()
+
+        # NOTE: If your table name has a space, you MUST use double quotes around it
+        create_table_query = """
+        CREATE TABLE IF NOT EXISTS "stock_data" (
+            id SERIAL PRIMARY KEY,
+            symbol VARCHAR(10) NOT NULL,
+            price NUMERIC(10, 2) NOT NULL,
+            timestamp TIMESTAMP NOT NULL
+            -- Add the rest of your column definitions here if you have more columns
+        );
+        """
+        cur.execute(create_table_query)
+        conn.commit()
+        print("Table 'stock_data' ensured to exist.")
+        cur.close()
+        conn.close()
+
+    except Exception as e:
+        print(f"An error occurred during table creation: {e}")
+        sys.exit(1) # Exit with an error code if creation fails
+
+if __name__ == "__main__":
+    create_tables()
+
+
+================================================
+FILE: PycharmProjects/setup_database/dashboard_app.py
+================================================
+import dash
+from dash import html, dcc, Input, Output
+import plotly.express as px
+import pandas as pd
+import sqlite3
+
+# Initialize the Dash app
+app = dash.Dash(__name__)
+
+
+def fetch_data_from_db():
+    """Fetches all stock data from the SQLite database into a pandas DataFrame."""
+    conn = sqlite3.connect('stockpilot.db')
+    df = pd.read_sql_query("SELECT * FROM stock_data", conn)
+    conn.close()
+
+    # Ensure date column is treated as a date object for plotting
+    df['trade_date'] = pd.to_datetime(df['trade_date'])
+    return df
+
+
+# Fetch the initial data
+df = fetch_data_from_db()
+# Get a list of unique symbols for the dropdown options
+available_symbols = df['symbol'].unique()
+
+# --- DEBUGGING LINE ---
+print(f"DEBUG: Dashboard found these symbols at startup: {available_symbols}")
+# ----------------------
+
+# Define the app layout
+app.layout = html.Div(children=[
+    html.H1(children='StockPilot Dev Dashboard'),
+    html.Div(children='Visualizing stock data from your SQLite database.'),
+
+    html.Div([
+        html.Label("Select Stock Symbol:"),
+        dcc.Dropdown(
+            id='symbol-dropdown',
+            options=[{'label': i, 'value': i} for i in available_symbols],
+            value=available_symbols if len(available_symbols) > 0 else None,
+            clearable=False
+        ),
+    ], style={'width': '50%', 'display': 'inline-block'}),
+
+    dcc.Graph(id='stock-price-graph'),
+])
+
+
+# Define the callback function to update the graph
+@app.callback(
+    Output('stock-price-graph', 'figure'),
+    Input('symbol-dropdown', 'value')
+)
+def update_graph(selected_symbol):
+    """Updates the graph based on the selected symbol from the dropdown."""
+    filtered_df = df[df['symbol'] == selected_symbol]
+    fig = px.line(filtered_df, x='trade_date', y='adjusted_close',
+                  title=f'{selected_symbol} Adjusted Close Price Over Time')
+    return fig
+
+
+if __name__ == '__main__':
+    # Run the development server
+    app.run(debug=True)
+
+
+================================================
+FILE: PycharmProjects/setup_database/Dockerfile
+================================================
+# Use an official Python runtime as a parent image
+FROM python:3.10-slim
+
+# Set the working directory in the container
+WORKDIR /app
+
+# Copy the requirements file into the container
+COPY requirements.txt .
+
+# Install any specified packages (none listed for now, but good practice)
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy the rest of the application code into the container
+COPY . .
+
+# Command to run the application when the container starts
+# This will execute your script to generate the report
+CMD ["python", "dashboard_app.py"]
+docker build -t stockpilot-app .
+
+docker run stockpilot-app
+
+
+================================================
+FILE: PycharmProjects/setup_database/fetch_data.py
+================================================
+from database_setup import get_db_connection
+import yfinance as yf
+import pandas as pd
+from datetime import datetime
+
+# Define the global stock symbols we are fetching as a list
+SYMBOLS = ['IBM', 'MSFT', 'AAPL']
+
+
+def clear_existing_data():
+    """
+    Clears the stock data table before appending new data.
+    """
+    Get the connection using our centralized function
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    # NOTE: Ensure 'stock data' is the correct table name
+    cursor.execute("DELETE FROM 'stock data'")
+    conn.commit()
+    conn.close() # Best practice: close connection when done
+    print("Existing database data cleared.")
+
+
+def fetch_and_store_data(symbol):
+    """
+    Fetches stock data for a symbol and stores it. (You will need to implement the rest of this function)
+    """
+    # Example usage inside this function:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    # ... your logic here ...
+    pass
+
+
+================================================
+FILE: PycharmProjects/setup_database/generate_report.py
+================================================
+from database_setup import get_db_connection
+import pandas as pd
+# Add other imports you might have, like for email sending or HTML generation
+
+# --- Start of updated database interaction logic ---
+
+def generate_stock_report_df():
+    """
+    Fetches data needed to generate the report.
+    """
+    # Use the centralized function here
+    conn = get_db_connection()
+    # Example SQL query to get stock data from the table name used previously
+    df = pd.read_sql_query("SELECT * FROM 'stock data'", conn)
+    conn.close()
+    return df
+
+# --- End of updated database interaction logic ---
+
+def generate_html_report(dataframe):
+    """
+    Logic to convert the dataframe into an HTML report file goes here.
+    """
+    # Example usage:
+    # dataframe.to_html('stock_report.html')
+    print("Logic to convert the dataframe into an html report file goes here.")
+    pass
+
+# Example usage if you run this file directly:
+if __name__ == '__main__':
+    report_data = generate_stock_report_df()
+    print(f"Generating report with {len(report_data)} rows.")
+    generate_html_report(report_data)
+
+
+================================================
+FILE: PycharmProjects/setup_database/launch_dashboard.py
+================================================
+from database_setup import get_db_connection
+import pandas as pd
+from dash import dcc, html, Dash
+import os
+# Add other imports you might have
+
+# --- Start of updated database interaction logic ---
+
+def fetch_data_for_dashboard():
+    """
+    Fetches data needed to populate the dashboard.
+    """
+    # Use the centralized function here
+    conn = get_db_connection()
+    # Example SQL query to get stock data
+    df = pd.read_sql_query("SELECT * FROM 'stock data'", conn)
+    conn.close()
+    return df
+
+# --- End of updated database interaction logic ---
+
+# Initialize the Dash app
+app = Dash(__name__)
+
+# Example of using the function later in the file:
+stock_data_df = fetch_data_for_dashboard()
+print(stock_data_df.head())
+
+# Define the layout of your app (example structure)
+app.layout = html.Div([
+    html.H1("StockPilot Dashboard"),
+    html.Div("Your data will go here.")
+])
+
+# Add your callbacks here if you have any...
+
+
+if __name__ == '__main__':
+    # Retrieve the PORT environment variable provided by Render, defaulting to 8050 for local testing
+    port = int(os.environ.get('PORT', 8050))
+    # Bind to host 0.0.0.0, which allows external access on Render, and set debug to False
+    app.run_server(host='0.0.0.0', port=port, debug=False)
+
+
+================================================
+FILE: PycharmProjects/setup_database/requirements.txt
+================================================
+[Binary file]
+
+
+================================================
+FILE: PycharmProjects/setup_database/run_workflow.py
+================================================
+import os
+import subprocess
+import time
+import sys
+
+
+def run_script(script_name):
+    """Helper function to run other python scripts using the current interpreter."""
+    print(f"\n--- Running {script_name} ---")
+    interpreter = sys.executable
+    try:
+        # Use subprocess to run the other scripts
+        subprocess.run([interpreter, script_name], check=True, cwd=os.getcwd())
+        print(f"--- Finished {script_name} Successfully ---")
+    except subprocess.CalledProcessError as e:
+        print(f"Error running {script_name}: {e}")
+        sys.exit(1)
+    except FileNotFoundError:
+        print(f"Error: Could not find {script_name}. Ensure the file exists.")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    print("--- Starting Full Stock Analysis Workflow ---")
+
+    # Step 1: Fetch the data
+    run_script("fetch_data.py")
+
+    # Step 2: Generate the report (uses the new data from Step 1)
+    run_script("generate_report.py")
+
+    # Step 3: Start the dashboard (will use the new data from Step 1)
+    print("\n--- Starting Dashboard Server (Press Ctrl+C to stop) ---")
+    print("Dashboard available at: 127.0.0.1")
+
+    # We run the dashboard in a loop or in the foreground as a final step
+    # Subprocess run without 'check=True' so it stays running
+    try:
+        subprocess.run([sys.executable, "dashboard_app.py"], cwd=os.getcwd())
+    except KeyboardInterrupt:
+        print("\nDashboard stopped by user.")
+    except Exception as e:
+        print(f"An error occurred with the dashboard: {e}")
+
+    print("--- Workflow Finished ---")
+
+
+================================================
+FILE: PycharmProjects/setup_database/Stock Pilot Dev Dashboard_backup.py
+================================================
+from database_setup import get_db_connection
+# import sqlite3  <-- This line is no longer needed
+import pandas as pd
+import smtplib
+import logging
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+
+
+# --- Start of updated database interaction logic ---
+
+def generate_stock_report_df():
+    """
+    Fetches data needed for the dashboard/report.
+    """
+    # Use the centralized function here
+    conn = get_db_connection()
+    # Example SQL query to get stock data from the table name used previously
+    df = pd.read_sql_query("SELECT * FROM 'stock data'", conn)
+    conn.close()
+    return df
+
+
+# --- End of updated database interaction logic ---
+
+
+# Rest of your original code follows...
+# You would use the generate_stock_report_df() function here:
+
+if __name__ == '__main__':
+<<<<<<< HEAD:PycharmProjects/setup_database/StockPilotDev_Dashboard.py
+    stock_data_df = generate_stock_report_df()
+    print(stock_data_df.head())
+
+    # Logic for sending an email or generating HTML goes here
+    # (e.g., preparing the email with smtplib)
+    logging.info("Report generated successfully.")
+=======
+    generate_stock_report()
+>>>>>>> b67208b3cfed271e7d496af781aae7ad7d3446a4:PycharmProjects/setup_database/Stock Pilot Dev Dashboard_backup.py
+
+
+
+================================================
+FILE: PycharmProjects/setup_database/stock_report.html
+================================================
+<html><head><title>Stock Report</title>
+        <style>
+            body { font-family: Arial, sans-serif; margin: 20px; }
+            h1 { color: #333; border-bottom: 2px solid #4CAF50; padding-bottom: 10px; }
+            table { width: 80%; border-collapse: collapse; margin-top: 15px; }
+            th, td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }
+            th { background-color: #4CAF50; color: white; }
+            tr:nth-child(even) { background-color: #f2f2f2; }
+            tr:hover { background-color: #ddd; }
+            .low-stock { background-color: #ffcccc; } 
+            .low-stock:hover { background-color: #ff9999; }
+        </style>
+        </head><body><h1>StockPilot Reorder Alerts Report (2025-12-22)</h1><table><tr><th>ID</th><th>Item Name</th><th>Reorder Level</th><th>Current Stock</th><th>Alert Date</th></tr><tr class="low-stock"><td>2</td><td>Bolts (M8)</td><td>20</td><td>10</td><td>2025-12-22</td></tr><tr class="low-stock"><td>1</td><td>Screws (M4)</td><td>50</td><td>25</td><td>2025-12-22</td></tr></table></body></html>
+
+
+================================================
+FILE: PycharmProjects/setup_database/style.css
+================================================
+/* General table styling */
+table {
+    border-collapse: collapse; /* Removes the gap between borders */
+    width: 70%; /* Makes the table a reasonable width on the page */
+    margin: 20px 0;
+}
+
+/* Styles for all cells (header and data) */
+th, td {
+    border: 1px solid #ddd; /* Adds a thin gray border */
+    padding: 10px; /* Adds space around the text */
+    text-align: left; /* Aligns text to the left */
+}
+
+/* Specific styling for the top header row */
+th {
+    background-color: #04AA6D; /* Green background */
+    color: white; /* White text */
+    font-weight: bold;
+}
+
+/* Styling for alternating rows (zebra-striping) */
+tr:nth-child(even) {
+    background-color: #f2f2f2; /* Light gray background for even rows */
+}
+

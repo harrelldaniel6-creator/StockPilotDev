@@ -1,0 +1,35 @@
+/* custom_styles.css */
+
+/* Darkens font for dropdowns and inputs */
+.Select-control, .Select-value-label, .VirtualizedSelectOption, .DateInput_input {
+    color: #1a1a1a !important;
+    font-weight: 500;
+}
+
+/* Darkens font for all labels and ensures bolding */
+label {
+    color: #1a1a1a !important;
+    font-weight: 600;
+    margin-bottom: 5px;
+    display: block;
+}
+
+/* Ensures file upload box text is dark */
+#upload-data .dash-upldrop-content {
+    color: #1a1a1a;
+}
+
+/* Modern Frosted Glass Card */
+.glass-card {
+    background: rgba(255, 255, 255, 0.7); /* Semi-transparent white */
+    backdrop-filter: blur(10px);         /* The "Frosted" effect */
+    border-radius: 15px;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.1); /* Subtle deep shadow */
+    padding: 20px;
+    transition: transform 0.3s ease;
+}
+
+.glass-card:hover {
+    transform: translateY(-5px); /* Interactive lift effect */
+}
