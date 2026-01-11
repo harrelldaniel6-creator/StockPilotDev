@@ -14,7 +14,6 @@ server = app.server
 # --- 2. Helper Functions ---
 def parse_contents(contents, filename):
     content_type, content_string = contents.split(',')
-    # Fixed typo: changed conatent_string to content_string
     decoded = base64.b64decode(content_string)
     try:
         df = pd.read_csv(io.StringIO(decoded.decode('utf-8'))) if 'csv' in filename else pd.read_excel(
@@ -251,16 +250,20 @@ def update_sales(s_js, l_js, i_js, rev, cust, cost_col, stock_col):
     kpi_cards = [
         html.Div([html.Small("REVENUE"),
                   html.Abbr(html.H2(f"${total_rev:,.0f}"), title="Total gross sales. Goal: 5% monthly growth.")],
-                 style={'backgroundColor': '#38a169', 'color': 'white', 'padding': '20px', 'borderRadius': '12px', 'flex': '1'}),
+                 style={'backgroundColor': '#38a169', 'color': 'white', 'padding': '20px', 'borderRadius': '12px',
+                        'flex': '1'}),
         html.Div([html.Small("AVG TRANSACTION"),
                   html.Abbr(html.H2(f"${atv:,.2f}"), title="Total Rev / Total Transactions. Goal: >$500.")],
-                 style={'backgroundColor': '#2f855a', 'color': 'white', 'padding': '20px', 'borderRadius': '12px', 'flex': '1'}),
+                 style={'backgroundColor': '#2f855a', 'color': 'white', 'padding': '20px', 'borderRadius': '12px',
+                        'flex': '1'}),
         html.Div([html.Small("GROSS MARGIN"),
                   html.Abbr(html.H2(f"{gross_margin:.1f}%"), title="Revenue minus Estimated COGS. Target: >40%.")],
-                 style={'backgroundColor': '#276749', 'color': 'white', 'padding': '20px', 'borderRadius': '12px', 'flex': '1'}),
+                 style={'backgroundColor': '#276749', 'color': 'white', 'padding': '20px', 'borderRadius': '12px',
+                        'flex': '1'}),
         html.Div([html.Small("NET PROFIT"),
                   html.Abbr(html.H2(f"{net_profit:.1f}%"), title="Profit after all Labor and COGS. Target: >15%.")],
-                 style={'backgroundColor': '#22543d', 'color': 'white', 'padding': '20px', 'borderRadius': '12px', 'flex': '1'}),
+                 style={'backgroundColor': '#22543d', 'color': 'white', 'padding': '20px', 'borderRadius': '12px',
+                        'flex': '1'}),
     ]
 
     date_col = df.select_dtypes(include=['datetime64']).columns[0]
@@ -296,7 +299,20 @@ def update_labor_logic(l_js, s_js, wage, start, end, rev_col):
         labor_pct = (total_l / total_s * 100) if total_s > 0 else 0
         fig = px.bar(merged, x='Hour', y=[rev_col, 'Spent'], barmode='group',
                      title="Profitability: Sales vs Labor Spend")
-        fig.update_layout(yaxis_tickprefix='$', yaxis_tickformat=',.2f', template="plotly_white")
+
+        # New Time formatting for X-Axis
+        time_labels = {h: f"{h if h <= 12 and h != 0 else abs(h - 12)} {'AM' if h < 12 else 'PM'}" for h in range(24)}
+        time_labels[0] = "12 AM"
+        time_labels[12] = "12 PM"
+
+        fig.update_layout(
+            xaxis=dict(
+                tickmode='array',
+                tickvals=list(range(24)),
+                ticktext=[time_labels[h] for h in range(24)]
+            ),
+            yaxis_tickprefix='$', yaxis_tickformat=',.2f', template="plotly_white"
+        )
     else:
         rplh = 0;
         labor_pct = 0
