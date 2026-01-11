@@ -7,7 +7,7 @@ import dash
 from dash import dcc, html, Input, Output, State, exceptions, callback_context
 
 # --- 1. App Setup ---
-app = dash.Dash(__name__, title="StockPilotDev v3.9.15 | 2026 Strategy Suite")
+app = dash.Dash(__name__, title="StockPilotDev v3.9.16 | 2026 Strategy Suite")
 server = app.server
 
 
@@ -110,8 +110,9 @@ app.layout = html.Div([
     dcc.Store(id='stored-labor-data', storage_type='session'),
     dcc.Store(id='stored-sales-data', storage_type='session'),
     dcc.Store(id='stored-inventory-data', storage_type='session'),
+
     html.Div([
-        html.H1("StockPilotDev: Integrated Strategy Suite (v3.9.14)", style={'color': '#ffffff', 'margin': '0'}),
+        html.H1("StockPilotDev: Integrated Strategy Suite (v3.9.15)", style={'color': '#ffffff', 'margin': '0'}),
         html.P("2026 SMB Command Center | Sales, Labor & Inventory", style={'color': '#cbd5e0'})
     ], style={'backgroundColor': '#2d3748', 'padding': '40px 20px', 'textAlign': 'center',
               'borderRadius': '0 0 20px 20px'}),
@@ -168,10 +169,16 @@ app.layout = html.Div([
             ], style={'display': 'flex', 'gap': '20px', 'marginBottom': '25px'}),
             html.Div(id='inv-kpi-container', style={'display': 'flex', 'gap': '15px', 'marginBottom': '20px'}),
             dcc.Graph(id='inventory-graph'),
-            html.H3("🚨 Dead Stock & Capital Risk", style={'marginTop': '30px', 'color': '#e53e3e'}),
-            dcc.Graph(id='waste-analysis-graph'),
-            html.Button("📥 Generate Reorder List", id="btn-reorder-list",
-                        style={'marginTop': '20px', 'cursor': 'pointer'}),
+
+            # Risk Zone UI Update
+            html.Div([
+                html.H3("🚨 Dead Stock & Capital Risk", style={'color': '#e53e3e', 'marginTop': '40px'}),
+                dcc.Graph(id='waste-analysis-graph'),
+                html.Button("📥 Generate Reorder List", id="btn-reorder-list",
+                            style={'backgroundColor': '#3182ce', 'color': 'white', 'padding': '15px 30px',
+                                   'borderRadius': '10px', 'border': 'none', 'marginTop': '25px', 'fontWeight': 'bold',
+                                   'cursor': 'pointer'})
+            ], style={'paddingTop': '20px'}),
             dcc.Download(id="download-reorder-list")
         ], style={'padding': '30px', 'borderRadius': '15px', 'backgroundColor': '#fff', 'margin': '20px auto',
                   'maxWidth': '1200px', 'border': '1px solid #e2e8f0'})
@@ -211,15 +218,10 @@ def sync_drops(s, l, i):
 
 
 @app.callback(
-    [Output('topline-stats', 'children'),
-     Output('sales-trend-graph', 'figure'),
+    [Output('topline-stats', 'children'), Output('sales-trend-graph', 'figure'),
      Output('customer-share-graph', 'figure')],
-    [Input('stored-sales-data', 'data'),
-     Input('stored-labor-data', 'data'),
-     Input('stored-inventory-data', 'data'),
-     Input('sales-col', 'value'),
-     Input('cust-col', 'value'),
-     Input('inv-cost-col', 'value'),
+    [Input('stored-sales-data', 'data'), Input('stored-labor-data', 'data'), Input('stored-inventory-data', 'data'),
+     Input('sales-col', 'value'), Input('cust-col', 'value'), Input('inv-cost-col', 'value'),
      Input('inv-stock-col', 'value')],
     prevent_initial_call=True
 )
@@ -234,8 +236,7 @@ def update_sales(s_js, l_js, i_js, rev, cust, cost_col, stock_col):
     if l_js:
         df_l = safe_load_df(l_js)
         numeric_cols = df_l.select_dtypes(include=['number']).columns
-        if not numeric_cols.empty:
-            total_labor = df_l[numeric_cols[0]].sum()
+        if not numeric_cols.empty: total_labor = df_l[numeric_cols[0]].sum()
 
     total_cogs = 0
     if i_js and cost_col and stock_col:
@@ -299,20 +300,12 @@ def update_labor_logic(l_js, s_js, wage, start, end, rev_col):
         labor_pct = (total_l / total_s * 100) if total_s > 0 else 0
         fig = px.bar(merged, x='Hour', y=[rev_col, 'Spent'], barmode='group',
                      title="Profitability: Sales vs Labor Spend")
-
-        # New Time formatting for X-Axis
         time_labels = {h: f"{h if h <= 12 and h != 0 else abs(h - 12)} {'AM' if h < 12 else 'PM'}" for h in range(24)}
-        time_labels[0] = "12 AM"
+        time_labels[0] = "12 AM";
         time_labels[12] = "12 PM"
-
         fig.update_layout(
-            xaxis=dict(
-                tickmode='array',
-                tickvals=list(range(24)),
-                ticktext=[time_labels[h] for h in range(24)]
-            ),
-            yaxis_tickprefix='$', yaxis_tickformat=',.2f', template="plotly_white"
-        )
+            xaxis=dict(tickmode='array', tickvals=list(range(24)), ticktext=[time_labels[h] for h in range(24)]),
+            yaxis_tickprefix='$', yaxis_tickformat=',.2f', template="plotly_white")
     else:
         rplh = 0;
         labor_pct = 0
@@ -336,8 +329,8 @@ def update_labor_logic(l_js, s_js, wage, start, end, rev_col):
 
 
 @app.callback(
-    [Output('inv-kpi-container', 'children'),
-     Output('inventory-graph', 'figure'), Output('waste-analysis-graph', 'figure')],
+    [Output('inv-kpi-container', 'children'), Output('inventory-graph', 'figure'),
+     Output('waste-analysis-graph', 'figure')],
     [Input('stored-inventory-data', 'data'), Input('stored-sales-data', 'data'), Input('inv-stock-col', 'value'),
      Input('inv-name-col', 'value'), Input('inv-cost-col', 'value'), Input('reorder-threshold', 'value')],
     prevent_initial_call=True
@@ -349,10 +342,8 @@ def unified_inventory_callback(inv_js, sales_js, stock, name, cost, thresh):
     inv_df[cost] = pd.to_numeric(inv_df[cost].astype(str).str.replace('[$,]', '', regex=True), errors='coerce').fillna(
         0)
 
-    inv_df['Required_Qty'] = ((thresh or 20) * 1.5 - inv_df[stock]).clip(lower=0)
-    inv_df['Restock_Cost'] = inv_df['Required_Qty'] * inv_df[cost]
     val = (inv_df[stock] * inv_df[cost]).sum()
-    restock_total = inv_df['Restock_Cost'].sum()
+    restock_total = (((thresh or 20) * 1.5 - inv_df[stock]).clip(lower=0) * inv_df[cost]).sum()
 
     turnover = 0
     if not sales_df.empty:
@@ -362,8 +353,13 @@ def unified_inventory_callback(inv_js, sales_js, stock, name, cost, thresh):
                      color_discrete_map={'CRITICAL': '#e53e3e', 'REORDER': '#ecc94b', 'HEALTHY': '#48bb78'},
                      title="Inventory Health Levels", text='Days_of_Cover')
         fig.update_traces(texttemplate='%{text:.1f} Days', textposition='outside')
+
+        # Risk Zone Visual Implementation
         waste_fig = px.scatter(inv_df, x='Days_of_Cover', y=stock, size=inv_df[cost].clip(lower=1), color='Status',
                                hover_name=name, title="Capital Trap Analysis")
+        waste_fig.add_vrect(x0=8, x1=12, fillcolor="Red", opacity=0.1, layer="below", line_width=0,
+                            annotation_text="HIGH CAPITAL RISK", annotation_position="top right")
+        waste_fig.update_layout(template="plotly_white")
     else:
         fig = px.bar(inv_df, x=name, y=stock);
         waste_fig = go.Figure()
@@ -396,13 +392,13 @@ def generate_reorder_list(n, inv_js, stock_col, name_col, cost_col, threshold):
     if not inv_js or not stock_col: return None
     df = safe_load_df(inv_js)
     reorder_df = df[df[stock_col] < (threshold or 20)].copy()
-    reorder_df['Suggested_Order_Qty'] = ((threshold or 20) * 1.5) - reorder_df[stock_col]
+    reorder_df['Units_to_Order'] = ((threshold or 20) * 1.5) - reorder_df[stock_col]
     if cost_col:
         reorder_df[cost_col] = pd.to_numeric(reorder_df[cost_col].astype(str).str.replace('[$,]', '', regex=True),
                                              errors='coerce').fillna(0)
-        reorder_df['Total_Line_Cost'] = reorder_df['Suggested_Order_Qty'] * reorder_df[cost_col]
-    return dcc.send_data_frame(reorder_df[[name_col, stock_col, 'Suggested_Order_Qty', 'Total_Line_Cost']].to_csv,
-                               f"StockPilotDev_v3.9.14_Reorder_List.csv", index=False)
+        reorder_df['Total_Line_Cost'] = reorder_df['Units_to_Order'] * reorder_df[cost_col]
+    return dcc.send_data_frame(reorder_df[[name_col, stock_col, 'Units_to_Order', 'Total_Line_Cost']].to_csv,
+                               f"StockPilotDev_v3.9.15_Reorder_List.csv", index=False)
 
 
 if __name__ == '__main__':
