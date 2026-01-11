@@ -7,7 +7,7 @@ import dash
 from dash import dcc, html, Input, Output, State, exceptions, callback_context
 
 # --- 1. App Setup ---
-app = dash.Dash(__name__, title="StockPilotDev v3.9.14 | 2026 Strategy Suite")
+app = dash.Dash(__name__, title="StockPilotDev v3.9.15 | 2026 Strategy Suite")
 server = app.server
 
 
