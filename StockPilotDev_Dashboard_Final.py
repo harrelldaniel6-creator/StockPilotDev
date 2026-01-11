@@ -50,12 +50,6 @@ def safe_load_df(json_data):
         return pd.DataFrame()
 
 
-def append_data(existing_json, new_json):
-    if not existing_json: return new_json
-    return pd.concat([safe_load_df(existing_json), safe_load_df(new_json)], axis=0, ignore_index=True).to_json(
-        date_format='iso', orient='split')
-
-
 def distribute_wages_hourly(df, wage_col, start_col, end_col):
     hourly_costs = []
     for _, row in df.iterrows():
@@ -74,18 +68,24 @@ def distribute_wages_hourly(df, wage_col, start_col, end_col):
         except:
             continue
     res = pd.DataFrame(hourly_costs)
-    if res.empty: return pd.DataFrame(columns=['Hour', 'Spent']), []
-    return res.groupby('Hour')['Spent'].sum().reset_index(), []
+    if res.empty: return pd.DataFrame(columns=['Hour', 'Spent'])
+    return res.groupby('Hour')['Spent'].sum().reset_index()
 
 
-def process_gsheet_url(url):
-    try:
-        if "/d/" in url:
-            sheet_id = url.split("/d/")[1].split("/")[0]
-            return f'https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid=0'
-    except:
-        return None
-    return None
+def calculate_inventory_health(inv_df, sales_df, stock_col, threshold):
+    date_col = sales_df.select_dtypes(include=['datetime64']).columns[0]
+    days_active = (sales_df[date_col].max() - sales_df[date_col].min()).days or 1
+    daily_velocity = len(sales_df) / days_active
+    inv_df['Daily_Burn'] = daily_velocity / len(inv_df)
+    inv_df['Days_of_Cover'] = inv_df[stock_col] / inv_df['Daily_Burn'].replace(0, 0.001)
+
+    def get_status(row):
+        if row[stock_col] <= (threshold * 0.5): return 'CRITICAL'
+        if row[stock_col] < threshold: return 'REORDER'
+        return 'HEALTHY'
+
+    inv_df['Status'] = inv_df.apply(get_status, axis=1)
+    return inv_df
 
 
 def route_by_score(df, labor, sales, inv):
@@ -98,11 +98,11 @@ def route_by_score(df, labor, sales, inv):
     i_score = len([k for k in i_keys if any(k in c for c in cols)])
     s_score = len([k for k in s_keys if any(k in c for c in cols)])
     if l_score > i_score and l_score > s_score:
-        return append_data(labor, js), sales, inv
+        return js, sales, inv
     elif i_score > l_score and i_score > s_score:
-        return labor, sales, append_data(inv, js)
+        return labor, sales, js
     else:
-        return labor, append_data(sales, js), inv
+        return labor, js, inv
 
 
 # --- 3. App Layout ---
@@ -111,26 +111,24 @@ app.layout = html.Div([
     dcc.Store(id='stored-sales-data', storage_type='session'),
     dcc.Store(id='stored-inventory-data', storage_type='session'),
     html.Div([
-        html.H1("StockPilotDev: Integrated Strategy Suite (v3.9.12)", style={'color': '#ffffff', 'margin': '0'}),
+        html.H1("StockPilotDev: Integrated Strategy Suite (v3.9.13)", style={'color': '#ffffff', 'margin': '0'}),
         html.P("2026 SMB Command Center | Sales, Labor & Inventory", style={'color': '#cbd5e0'})
     ], style={'backgroundColor': '#2d3748', 'padding': '40px 20px', 'textAlign': 'center',
               'borderRadius': '0 0 20px 20px'}),
+
     html.Div([
         html.Div([
             dcc.Upload(id='upload-data', children=html.Div(['Drag & Drop Files']), multiple=True,
                        style={'width': '100%', 'height': '60px', 'lineHeight': '60px', 'borderWidth': '1px',
                               'borderStyle': 'dashed', 'borderRadius': '10px', 'textAlign': 'center',
-                              'backgroundColor': '#fff'}),
-            dcc.Input(id='gsheet-url', type='text', placeholder='Paste Google Sheets URL here...',
-                      style={'width': '100%', 'height': '40px', 'marginTop': '10px', 'borderRadius': '8px',
-                             'border': '1px solid #cbd5e0', 'padding': '0 10px'}),
-            html.Div(id='gsheet-status', style={'marginTop': '10px', 'fontSize': '14px', 'fontWeight': 'bold'}),
+                              'backgroundColor': '#fff', 'margin': '20px 0'}),
             html.Button("Reset Session", id="reset-btn",
                         style={'backgroundColor': '#e53e3e', 'color': 'white', 'padding': '10px 25px',
-                               'borderRadius': '8px', 'border': 'none', 'marginTop': '15px', 'cursor': 'pointer'})
-        ], style={'margin': '30px auto', 'maxWidth': '800px', 'textAlign': 'center'}),
+                               'borderRadius': '8px', 'border': 'none', 'display': 'block', 'margin': '0 auto',
+                               'cursor': 'pointer'})
+        ], style={'maxWidth': '800px', 'margin': '0 auto'}),
 
-        # PILLARS
+        # PILLARS: Sales
         html.Div([
             html.H2("📈 Sales & Financials", style={'color': '#38a169'}),
             html.Div([
@@ -138,14 +136,16 @@ app.layout = html.Div([
                 html.Div([html.Label("Cust ID Col:"), dcc.Dropdown(id='cust-col')], style={'flex': '1'}),
             ], style={'display': 'flex', 'gap': '20px', 'marginBottom': '25px'}),
             html.Div(id='topline-stats', style={'display': 'flex', 'gap': '15px'}),
-            html.Div(
-                [dcc.Loading(dcc.Graph(id='sales-trend-graph')), dcc.Loading(dcc.Graph(id='customer-share-graph'))],
-                style={'display': 'flex', 'gap': '20px'})
-        ], style={'padding': '30px', 'marginBottom': '30px', 'border': '1px solid #e2e8f0', 'borderRadius': '15px',
-                  'backgroundColor': '#fff'}),
+            html.Div([
+                dcc.Graph(id='sales-trend-graph', style={'flex': '1'}),
+                dcc.Graph(id='customer-share-graph', style={'flex': '1'})
+            ], style={'display': 'flex', 'gap': '20px'})
+        ], style={'padding': '30px', 'backgroundColor': '#fff', 'borderRadius': '15px', 'margin': '20px auto',
+                  'maxWidth': '1200px', 'border': '1px solid #e2e8f0'}),
 
+        # PILLARS: Labor
         html.Div([
-            html.H2("👥 Labor Productivity", style={'color': '#5a67d8'}),
+            html.H2("👥 Labor & Peak Efficiency", style={'color': '#5a67d8'}),
             html.Div([
                 html.Div([html.Label("Wage Col:"), dcc.Dropdown(id='wage-col')], style={'flex': '1'}),
                 html.Div([html.Label("Start Time:"), dcc.Dropdown(id='start-col')], style={'flex': '1'}),
@@ -155,17 +155,15 @@ app.layout = html.Div([
                 html.Div([html.Small("TOTAL LABOR SPEND"), html.H3(id='total-labor-text')],
                          style={'flex': '1', 'backgroundColor': '#5a67d8', 'color': 'white', 'padding': '20px',
                                 'borderRadius': '12px'}),
-                html.Div([html.Small("LABOR % OF SALES"), html.H3(id='labor-pct-text')],
-                         style={'flex': '1', 'backgroundColor': '#4c51bf', 'color': 'white', 'padding': '20px',
-                                'borderRadius': '12px'}),
                 html.Div([html.Small("REVENUE PER LABOR HOUR"), html.H3(id='rplh-text')],
                          style={'flex': '1', 'backgroundColor': '#3182ce', 'color': 'white', 'padding': '20px',
                                 'borderRadius': '12px'}),
             ], style={'display': 'flex', 'gap': '15px'}),
-            dcc.Loading(dcc.Graph(id='labor-hourly-graph'))
-        ], style={'padding': '30px', 'marginBottom': '30px', 'border': '1px solid #e2e8f0', 'borderRadius': '15px',
-                  'backgroundColor': '#fff'}),
+            dcc.Graph(id='profitability-heatmap')
+        ], style={'padding': '30px', 'backgroundColor': '#fff', 'borderRadius': '15px', 'margin': '20px auto',
+                  'maxWidth': '1200px', 'border': '1px solid #e2e8f0'}),
 
+        # PILLARS: Inventory
         html.Div([
             html.H2("📦 Inventory Intelligence", style={'color': '#718096'}),
             html.Div([
@@ -179,48 +177,39 @@ app.layout = html.Div([
                 html.Div([html.Small("TOTAL INV VALUE"), html.H3(id='inv-value-text')],
                          style={'flex': '1', 'backgroundColor': '#718096', 'color': 'white', 'padding': '20px',
                                 'borderRadius': '12px'}),
-                html.Div([html.Small("LOW STOCK ITEMS"), html.H3(id='low-stock-count-text')],
+                html.Div([html.Small("EST. RESTOCK INVESTMENT"), html.H3(id='restock-investment-text')],
                          style={'flex': '1', 'backgroundColor': '#f56565', 'color': 'white', 'padding': '20px',
                                 'borderRadius': '12px'}),
-            ], style={'display': 'flex', 'gap': '15px'}),
-            dcc.Loading(dcc.Graph(id='inventory-graph')),
-            html.Button("📥 Generate Reorder List", id="btn-reorder-list", style={'marginTop': '10px'}),
+            ], style={'display': 'flex', 'gap': '15px', 'marginBottom': '20px'}),
+            dcc.Graph(id='inventory-graph'),
+            html.H3("🚨 Dead Stock & Capital Risk", style={'marginTop': '30px', 'color': '#e53e3e'}),
+            dcc.Graph(id='waste-analysis-graph'),
+            html.Button("📥 Generate Reorder List", id="btn-reorder-list",
+                        style={'marginTop': '20px', 'cursor': 'pointer'}),
             dcc.Download(id="download-reorder-list")
-        ], style={'padding': '30px', 'border': '1px solid #e2e8f0', 'borderRadius': '15px', 'backgroundColor': '#fff'})
-    ], style={'maxWidth': '1200px', 'margin': '0 auto'})
+        ], style={'padding': '30px', 'borderRadius': '15px', 'backgroundColor': '#fff', 'margin': '20px auto',
+                  'maxWidth': '1200px', 'border': '1px solid #e2e8f0'})
+    ])
 ])
 
 
 # --- 4. Callbacks ---
 @app.callback(
-    [Output('stored-labor-data', 'data'), Output('stored-sales-data', 'data'), Output('stored-inventory-data', 'data'),
-     Output('gsheet-status', 'children'), Output('gsheet-status', 'style')],
-    [Input('upload-data', 'contents'), Input('gsheet-url', 'value'), Input('reset-btn', 'n_clicks')],
+    [Output('stored-labor-data', 'data'), Output('stored-sales-data', 'data'), Output('stored-inventory-data', 'data')],
+    [Input('upload-data', 'contents'), Input('reset-btn', 'n_clicks')],
     [State('upload-data', 'filename'), State('stored-labor-data', 'data'), State('stored-sales-data', 'data'),
      State('stored-inventory-data', 'data')],
     prevent_initial_call=True
 )
-def master_intake(contents, url, reset, names, labor, sales, inv):
-    tid = callback_context.triggered_id
-    if tid == 'reset-btn': return None, None, None, "Reset", {'color': 'gray'}
-    msg, color = "", "green"
-    if tid == 'gsheet-url' and url:
-        csv = process_gsheet_url(url)
-        if csv:
-            try:
-                df = pd.read_csv(csv)
-                labor, sales, inv = route_by_score(df, labor, sales, inv)
-                msg = "✅ Cloud Connected"
-            except:
-                msg, color = "❌ Connection Error", "red"
-    if tid == 'upload-data' and contents:
+def master_intake(contents, reset, names, labor, sales, inv):
+    if callback_context.triggered_id == 'reset-btn': return None, None, None
+    if contents:
         for c, n in zip(contents, names):
             js = parse_contents(c, n)
             if js:
                 df = safe_load_df(js)
                 labor, sales, inv = route_by_score(df, labor, sales, inv)
-        msg = f"✅ {len(contents)} File(s) Uploaded"
-    return labor, sales, inv, msg, {'color': color, 'marginTop': '10px'}
+    return labor, sales, inv
 
 
 @app.callback(
@@ -246,69 +235,85 @@ def update_sales(js, rev, cust):
     df = safe_load_df(js)
     df[rev] = pd.to_numeric(df[rev].astype(str).str.replace('[$,]', '', regex=True), errors='coerce').fillna(0)
     total = df[rev].sum()
-    top = html.Div(
-        [html.Abbr("REVENUE", title="Total gross sales generated.", style={'textDecoration': 'none', 'cursor': 'help'}),
-         html.H2(f"${total:,.0f}")],
-        style={'backgroundColor': '#48bb78', 'color': 'white', 'padding': '20px', 'borderRadius': '12px', 'flex': '1'})
 
-    # Updated: Added Mode 'text' and yaxis prefix
-    fig1 = px.line(df, x=df.columns[0], y=rev, title="Monthly Sales Trend")
-    fig1.update_traces(mode="lines+markers+text", texttemplate="$%{y:,.0f}", textposition="top center")
-    fig1.update_layout(yaxis_tickprefix='$', yaxis_tickformat=',.0f')
+    date_col = df.select_dtypes(include=['datetime64']).columns[0]
+    df_monthly = df.set_index(date_col).resample('MS')[rev].sum().reset_index()
 
-    fig2 = px.pie(df.groupby(cust)[rev].sum().reset_index().nlargest(10, rev), values=rev, names=cust, hole=0.4)
-    fig2.update_traces(textinfo='percent+label')
+    top = html.Div([html.Small("TOTAL REVENUE"), html.H2(f"${total:,.0f}")],
+                   style={'backgroundColor': '#38a169', 'color': 'white', 'padding': '20px', 'borderRadius': '12px',
+                          'flex': '1'})
+
+    fig1 = px.line(df_monthly, x=date_col, y=rev, title="Monthly Sales Trend (Aggregated)")
+    fig1.update_layout(yaxis_tickprefix='$', yaxis_tickformat=',.0f', template="plotly_white")
+
+    cust_data = df.groupby(cust)[rev].sum().reset_index().nlargest(10, rev)
+    fig2 = px.pie(cust_data, values=rev, names=cust, hole=0.4, title="Revenue Share by Customer")
+
     return top, fig1, fig2
 
 
 @app.callback(
-    [Output('labor-hourly-graph', 'figure'), Output('total-labor-text', 'children'),
-     Output('labor-pct-text', 'children'), Output('rplh-text', 'children')],
+    [Output('profitability-heatmap', 'figure'), Output('total-labor-text', 'children'),
+     Output('rplh-text', 'children')],
     [Input('stored-labor-data', 'data'), Input('stored-sales-data', 'data'), Input('wage-col', 'value'),
      Input('start-col', 'value'), Input('end-col', 'value'), Input('sales-col', 'value')],
     prevent_initial_call=True
 )
-def update_labor(l_js, s_js, wage, start, end, rev_col):
+def update_labor_logic(l_js, s_js, wage, start, end, rev_col):
     if not l_js or not all([wage, start, end]): raise exceptions.PreventUpdate
     l_df, s_df = safe_load_df(l_js), safe_load_df(s_js)
-    hourly, _ = distribute_wages_hourly(l_df, wage, start, end)
-    total_l = hourly['Spent'].sum()
-    total_s = pd.to_numeric(s_df[rev_col].astype(str).str.replace('[$,]', '', regex=True), errors='coerce').sum() if (
-                not s_df.empty and rev_col) else 0
-    hrs = (pd.to_datetime(l_df[end]) - pd.to_datetime(l_df[start])).dt.total_seconds().sum() / 3600
-    rplh = total_s / hrs if hrs > 0 else 0
+    hourly_labor = distribute_wages_hourly(l_df, wage, start, end)
+    total_l = hourly_labor['Spent'].sum()
 
-    # Updated: Added Axis Prefix and texttemplate
-    fig = px.bar(hourly, x='Hour', y='Spent', title="Labor Cost by Hour", text_auto='.2s')
-    fig.update_traces(texttemplate='$%{y:,.2f}', textposition='outside')
-    fig.update_layout(yaxis_tickprefix='$', yaxis_tickformat=',.2f', template="plotly_white")
-
-    return fig, html.Abbr(f"${total_l:,.2f}", title="Total wage spend."), html.Abbr(
-        f"{(total_l / total_s * 100):.1f}%" if total_s > 0 else "0%", title="Labor as % of Sales."), html.Abbr(
-        f"${rplh:.2f}", title="Revenue per Labor Hour.")
+    if not s_df.empty and rev_col:
+        s_df[rev_col] = pd.to_numeric(s_df[rev_col].astype(str).str.replace('[$,]', '', regex=True),
+                                      errors='coerce').fillna(0)
+        s_df['Hour'] = pd.to_datetime(s_df.iloc[:, 0]).dt.hour
+        hourly_sales = s_df.groupby('Hour')[rev_col].sum().reset_index()
+        merged = pd.merge(hourly_labor, hourly_sales, on='Hour', how='outer').fillna(0)
+        total_s = merged[rev_col].sum()
+        rplh = total_s / (len(l_df) or 1)
+        fig = px.bar(merged, x='Hour', y=[rev_col, 'Spent'], barmode='group',
+                     title="Profitability: Sales vs Labor Spend")
+        fig.update_layout(yaxis_tickprefix='$', yaxis_tickformat=',.2f', template="plotly_white")
+    else:
+        rplh = 0
+        fig = px.bar(hourly_labor, x='Hour', y='Spent', title="Labor Cost Distribution")
+    return fig, f"${total_l:,.2f}", f"${rplh:,.2f}"
 
 
 @app.callback(
-    [Output('inv-value-text', 'children'), Output('low-stock-count-text', 'children'),
-     Output('inventory-graph', 'figure')],
-    [Input('stored-inventory-data', 'data'), Input('inv-stock-col', 'value'), Input('inv-name-col', 'value'),
-     Input('inv-cost-col', 'value'), Input('reorder-threshold', 'value')],
+    [Output('inv-value-text', 'children'), Output('restock-investment-text', 'children'),
+     Output('inventory-graph', 'figure'), Output('waste-analysis-graph', 'figure')],
+    [Input('stored-inventory-data', 'data'), Input('stored-sales-data', 'data'), Input('inv-stock-col', 'value'),
+     Input('inv-name-col', 'value'), Input('inv-cost-col', 'value'), Input('reorder-threshold', 'value')],
     prevent_initial_call=True
 )
-def unified_inventory_callback(js, stock, name, cost, thresh):
-    if not js or not stock or not name: raise exceptions.PreventUpdate
-    df = safe_load_df(js)
-    df[stock] = pd.to_numeric(df[stock], errors='coerce').fillna(0)
-    c_vals = pd.to_numeric(df[cost].astype(str).str.replace('[$,]', '', regex=True), errors='coerce').fillna(
-        10) if cost else 10
-    val = (df[stock] * c_vals).sum()
+def unified_inventory_callback(inv_js, sales_js, stock, name, cost, thresh):
+    if not inv_js or not stock or not name or not cost: raise exceptions.PreventUpdate
+    inv_df, sales_df = safe_load_df(inv_js), safe_load_df(sales_js)
+    inv_df[stock] = pd.to_numeric(inv_df[stock], errors='coerce').fillna(0)
+    inv_df[cost] = pd.to_numeric(inv_df[cost].astype(str).str.replace('[$,]', '', regex=True), errors='coerce').fillna(
+        0)
 
-    # Updated: Added Data Labels to Inventory
-    fig = px.bar(df.nlargest(15, stock), x=name, y=stock, title="Current Stock Levels", text_auto=True)
-    fig.update_traces(textposition='outside')
+    inv_df['Required_Qty'] = ((thresh or 20) * 1.5 - inv_df[stock]).clip(lower=0)
+    inv_df['Restock_Cost'] = inv_df['Required_Qty'] * inv_df[cost]
+    val = (inv_df[stock] * inv_df[cost]).sum()
+    restock_total = inv_df['Restock_Cost'].sum()
 
-    return html.Abbr(f"${val:,.2f}", title="Total capital in stock."), html.Abbr(
-        f"{len(df[df[stock] < (thresh or 20)])}", title="Items below reorder point."), fig
+    if not sales_df.empty:
+        inv_df = calculate_inventory_health(inv_df, sales_df, stock, thresh or 20)
+        fig = px.bar(inv_df, x=name, y=stock, color='Status',
+                     color_discrete_map={'CRITICAL': '#e53e3e', 'REORDER': '#ecc94b', 'HEALTHY': '#48bb78'},
+                     title="Inventory Health Levels", text='Days_of_Cover')
+        fig.update_traces(texttemplate='%{text:.1f} Days', textposition='outside')
+        waste_fig = px.scatter(inv_df, x='Days_of_Cover', y=stock, size=inv_df[cost].clip(lower=1), color='Status',
+                               hover_name=name, title="Capital Trap Analysis")
+    else:
+        fig = px.bar(inv_df, x=name, y=stock, title="Stock Counts")
+        waste_fig = go.Figure()
+
+    return f"${val:,.2f}", f"${restock_total:,.2f}", fig, waste_fig
 
 
 if __name__ == '__main__':
