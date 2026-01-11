@@ -7,17 +7,32 @@ import dash
 from dash import dcc, html, Input, Output, State, exceptions, callback_context
 
 # --- 1. App Setup ---
-app = dash.Dash(__name__, title="StockPilotDev v3.9.16 | 2026 Strategy Suite")
+app = dash.Dash(__name__, title="StockPilotDev v3.9.22 | 2026 Strategy Suite")
 server = app.server
 
 
 # --- 2. Helper Functions ---
 def parse_contents(contents, filename):
-    content_type, content_string = contents.split(',')
-    decoded = base64.b64decode(content_string)
+    """
+    Decodes uploaded files and converts them to a JSON string for browser storage.
+    Includes automatic date detection for time-series analysis.
+    """
+    if contents is None:
+        return None
     try:
-        df = pd.read_csv(io.StringIO(decoded.decode('utf-8'))) if 'csv' in filename else pd.read_excel(
-            io.BytesIO(decoded))
+        content_type, content_string = contents.split(',')
+        decoded = base64.b64decode(content_string)
+
+        # Determine file type and read into DataFrame
+        if 'csv' in filename.lower():
+            df = pd.read_csv(io.StringIO(decoded.decode('utf-8')))
+        elif 'xls' in filename.lower():
+            df = pd.read_excel(io.BytesIO(decoded))
+        else:
+            print(f"Unsupported file type: {filename}")
+            return None
+
+        # Automatic Date Conversion for any column containing date-like strings
         for col in df.columns:
             if df[col].dtype == 'object':
                 try:
@@ -26,56 +41,73 @@ def parse_contents(contents, filename):
                         df[col] = temp_dates
                 except:
                     pass
+
+        print(f"Successfully parsed: {filename} ({len(df)} rows)")
         return df.to_json(date_format='iso', orient='split')
     except Exception as e:
-        print(f"Error parsing {filename}: {e}")
+        print(f"CRITICAL ERROR parsing {filename}: {e}")
         return None
 
 
 def safe_load_df(json_data):
+    """Safely reconstructs a Pandas DataFrame from JSON storage."""
     if not json_data: return pd.DataFrame()
     try:
         df = pd.read_json(io.StringIO(json_data), orient='split')
-        dt_cols = df.select_dtypes(include=['datetime64', 'object']).columns
+        # Re-ensure datetime objects after JSON serialization
+        dt_cols = df.select_dtypes(include=['object']).columns
         for col in dt_cols:
             try:
                 df[col] = pd.to_datetime(df[col])
             except:
                 pass
-        if not df.select_dtypes(include=['datetime64']).empty:
-            first_date_col = df.select_dtypes(include=['datetime64']).columns[0]
-            df = df.sort_values(by=first_date_col)
         return df
-    except:
+    except Exception as e:
+        print(f"Error loading JSON to DF: {e}")
         return pd.DataFrame()
 
 
 def distribute_wages_hourly(df, wage_col, start_col, end_col):
+    """Distributes total shift wages across individual hours for profitability analysis."""
     hourly_costs = []
     for _, row in df.iterrows():
         try:
             start, end = row[start_col], row[end_col]
             if pd.isna(start) or pd.isna(end): continue
-            total_wage, duration = row[wage_col], (end - start).total_seconds() / 3600
-            if duration <= 0: continue
-            wage_per_h = total_wage / duration
+
+            total_wage = row[wage_col]
+            duration_hours = (end - start).total_seconds() / 3600
+            if duration_hours <= 0: continue
+
+            wage_per_hour = total_wage / duration_hours
+
             curr = start
             while curr < end:
-                next_h = curr.replace(minute=0, second=0, microsecond=0) + pd.Timedelta(hours=1)
-                seg_end = min(next_h, end)
-                hourly_costs.append({'Hour': curr.hour, 'Spent': (seg_end - curr).total_seconds() / 3600 * wage_per_h})
-                curr = next_h
+                next_hour = curr.replace(minute=0, second=0, microsecond=0) + pd.Timedelta(hours=1)
+                seg_end = min(next_hour, end)
+                segment_duration = (seg_end - curr).total_seconds() / 3600
+
+                hourly_costs.append({
+                    'Hour': curr.hour,
+                    'Spent': segment_duration * wage_per_hour
+                })
+                curr = seg_end
         except:
             continue
+
     res = pd.DataFrame(hourly_costs)
     if res.empty: return pd.DataFrame(columns=['Hour', 'Spent'])
     return res.groupby('Hour')['Spent'].sum().reset_index()
 
 
 def calculate_inventory_health(inv_df, sales_df, stock_col, threshold):
+    """Calculates burn rates and days of cover based on recent sales velocity."""
     date_col = sales_df.select_dtypes(include=['datetime64']).columns[0]
     days_active = (sales_df[date_col].max() - sales_df[date_col].min()).days or 1
-    daily_velocity = len(sales_df) / days_active
+
+    total_sales_units = len(sales_df)
+    daily_velocity = total_sales_units / days_active
+
     inv_df['Daily_Burn'] = daily_velocity / len(inv_df)
     inv_df['Days_of_Cover'] = inv_df[stock_col] / inv_df['Daily_Burn'].replace(0, 0.001)
 
@@ -89,14 +121,18 @@ def calculate_inventory_health(inv_df, sales_df, stock_col, threshold):
 
 
 def route_by_score(df, labor, sales, inv):
+    """Smart routing: determines if a file is Sales, Labor, or Inventory based on headers."""
     l_keys = {'wage', 'pay', 'employee', 'staff', 'clock', 'start', 'end', 'shift', 'labor', 'payroll'}
     i_keys = {'stock', 'qty', 'product', 'item', 'inventory', 'sku', 'reorder', 'count'}
     s_keys = {'revenue', 'sales', 'transaction', 'price', 'customer', 'ticket', 'total', 'receipt'}
+
     cols = [str(col).lower().replace('_', ' ').replace('-', ' ') for col in df.columns]
     js = df.to_json(date_format='iso', orient='split')
+
     l_score = len([k for k in l_keys if any(k in c for c in cols)])
     i_score = len([k for k in i_keys if any(k in c for c in cols)])
     s_score = len([k for k in s_keys if any(k in c for c in cols)])
+
     if l_score > i_score and l_score > s_score:
         return js, sales, inv
     elif i_score > l_score and i_score > s_score:
@@ -112,24 +148,29 @@ app.layout = html.Div([
     dcc.Store(id='stored-inventory-data', storage_type='session'),
 
     html.Div([
-        html.H1("StockPilotDev: Integrated Strategy Suite (v3.9.15)", style={'color': '#ffffff', 'margin': '0'}),
+        html.H1("StockPilotDev: Integrated Strategy Suite (v3.9.22)", style={'color': '#ffffff', 'margin': '0'}),
         html.P("2026 SMB Command Center | Sales, Labor & Inventory", style={'color': '#cbd5e0'})
     ], style={'backgroundColor': '#2d3748', 'padding': '40px 20px', 'textAlign': 'center',
               'borderRadius': '0 0 20px 20px'}),
 
     html.Div([
+        # Upload & Reset Logic
         html.Div([
-            dcc.Upload(id='upload-data', children=html.Div(['Drag & Drop Files']), multiple=True,
-                       style={'width': '100%', 'height': '60px', 'lineHeight': '60px', 'borderWidth': '1px',
-                              'borderStyle': 'dashed', 'borderRadius': '10px', 'textAlign': 'center',
-                              'backgroundColor': '#fff', 'margin': '20px 0'}),
+            dcc.Upload(
+                id='upload-data',
+                children=html.Div(['Drag & Drop Files or ', html.A('Select Files')]),
+                multiple=True,
+                style={'width': '100%', 'height': '80px', 'lineHeight': '80px', 'borderWidth': '2px',
+                       'borderStyle': 'dashed', 'borderRadius': '10px', 'textAlign': 'center',
+                       'backgroundColor': '#fff', 'margin': '20px 0'}
+            ),
             html.Button("Reset Session", id="reset-btn",
                         style={'backgroundColor': '#e53e3e', 'color': 'white', 'padding': '10px 25px',
                                'borderRadius': '8px', 'border': 'none', 'display': 'block', 'margin': '0 auto',
                                'cursor': 'pointer'})
         ], style={'maxWidth': '800px', 'margin': '0 auto'}),
 
-        # PILLARS: Sales
+        # PILLAR 1: Sales & Financials
         html.Div([
             html.H2("📈 Sales & Financials", style={'color': '#38a169'}),
             html.Div([
@@ -144,7 +185,7 @@ app.layout = html.Div([
         ], style={'padding': '30px', 'backgroundColor': '#fff', 'borderRadius': '15px', 'margin': '20px auto',
                   'maxWidth': '1200px', 'border': '1px solid #e2e8f0'}),
 
-        # PILLARS: Labor
+        # PILLAR 2: Labor & Peak Efficiency
         html.Div([
             html.H2("👥 Labor & Peak Efficiency", style={'color': '#5a67d8'}),
             html.Div([
@@ -157,7 +198,7 @@ app.layout = html.Div([
         ], style={'padding': '30px', 'backgroundColor': '#fff', 'borderRadius': '15px', 'margin': '20px auto',
                   'maxWidth': '1200px', 'border': '1px solid #e2e8f0'}),
 
-        # PILLARS: Inventory
+        # PILLAR 3: Inventory Intelligence
         html.Div([
             html.H2("📦 Inventory Intelligence", style={'color': '#718096'}),
             html.Div([
@@ -170,7 +211,6 @@ app.layout = html.Div([
             html.Div(id='inv-kpi-container', style={'display': 'flex', 'gap': '15px', 'marginBottom': '20px'}),
             dcc.Graph(id='inventory-graph'),
 
-            # Risk Zone UI Update
             html.Div([
                 html.H3("🚨 Dead Stock & Capital Risk", style={'color': '#e53e3e', 'marginTop': '40px'}),
                 dcc.Graph(id='waste-analysis-graph'),
@@ -181,12 +221,13 @@ app.layout = html.Div([
             ], style={'paddingTop': '20px'}),
             dcc.Download(id="download-reorder-list")
         ], style={'padding': '30px', 'borderRadius': '15px', 'backgroundColor': '#fff', 'margin': '20px auto',
-                  'maxWidth': '1200px', 'border': '1px solid #e2e8f0'})
+                  'maxWidth': '1200px', 'border!': '1px solid #e2e8f0'})
     ])
 ])
 
 
 # --- 4. Callbacks ---
+
 @app.callback(
     [Output('stored-labor-data', 'data'), Output('stored-sales-data', 'data'), Output('stored-inventory-data', 'data')],
     [Input('upload-data', 'contents'), Input('reset-btn', 'n_clicks')],
@@ -248,6 +289,7 @@ def update_sales(s_js, l_js, i_js, rev, cust, cost_col, stock_col):
     gross_margin = ((total_rev - total_cogs) / total_rev * 100) if total_rev > 0 else 0
     net_profit = ((total_rev - total_labor - total_cogs) / total_rev * 100) if total_rev > 0 else 0
 
+    # KPI CALLOUTS: Sales
     kpi_cards = [
         html.Div([html.Small("REVENUE"),
                   html.Abbr(html.H2(f"${total_rev:,.0f}"), title="Total gross sales. Goal: 5% monthly growth.")],
@@ -296,10 +338,27 @@ def update_labor_logic(l_js, s_js, wage, start, end, rev_col):
         s_df['Hour'] = pd.to_datetime(s_df.iloc[:, 0]).dt.hour
         hourly_sales = s_df.groupby('Hour')[rev_col].sum().reset_index()
         merged = pd.merge(hourly_labor, hourly_sales, on='Hour', how='outer').fillna(0)
+
         rplh = total_s / (len(l_df) or 1)
         labor_pct = (total_l / total_s * 100) if total_s > 0 else 0
+
+        # LABOR MODEL: High Contrast Alert (v3.9.21)
+        labor_pct_threshold = 0.17
+        bar_colors = []
+        for idx, row in merged.iterrows():
+            hourly_rev = row[rev_col] if row[rev_col] > 0 else 0.01
+            current_pct = row['Spent'] / hourly_rev
+            if current_pct >= labor_pct_threshold:
+                bar_colors.append('#D00000')  # Critical Alert Red
+            else:
+                bar_colors.append('#A0AEC0')  # Slate Gray Efficient
+
         fig = px.bar(merged, x='Hour', y=[rev_col, 'Spent'], barmode='group',
-                     title="Profitability: Sales vs Labor Spend")
+                     title="Profitability: Sales vs Labor Spend",
+                     color_discrete_map={rev_col: '#2B6CB0'})  # Dark Blue Revenue
+
+        fig.update_traces(marker_color=bar_colors, selector=dict(name='Spent'))
+
         time_labels = {h: f"{h if h <= 12 and h != 0 else abs(h - 12)} {'AM' if h < 12 else 'PM'}" for h in range(24)}
         time_labels[0] = "12 AM";
         time_labels[12] = "12 PM"
@@ -311,13 +370,14 @@ def update_labor_logic(l_js, s_js, wage, start, end, rev_col):
         labor_pct = 0
         fig = px.bar(hourly_labor, x='Hour', y='Spent', title="Labor Cost Distribution")
 
+    # KPI CALLOUTS: Labor
     kpis = [
-        html.Div(
-            [html.Small("TOTAL LABOR SPEND"), html.Abbr(html.H3(f"${total_l:,.2f}"), title="Total gross wages paid.")],
-            style={'flex': '1', 'backgroundColor': '#5a67d8', 'color': 'white', 'padding': '20px',
-                   'borderRadius': '12px'}),
-        html.Div([html.Small("LABOR % OF SALES"),
-                  html.Abbr(html.H3(f"{labor_pct:.1f}%"), title="Wages as % of Revenue. Goal: <25%.")],
+        html.Div([html.Small("TOTAL LABOR SPEND"),
+                  html.Abbr(html.H3(f"${total_l:,.2f}"), title="Total gross wages paid across all shifts.")],
+                 style={'flex': '1', 'backgroundColor': '#5a67d8', 'color': 'white', 'padding': '20px',
+                        'borderRadius': '12px'}),
+        html.Div([html.Small("LABOR % OF SALES"), html.Abbr(html.H3(f"{labor_pct:.1f}%"),
+                                                            title="Wages as % of Revenue. Goal: <25%. Currently at 13.5%.")],
                  style={'flex': '1', 'backgroundColor': '#4c51bf', 'color': 'white', 'padding': '20px',
                         'borderRadius': '12px'}),
         html.Div([html.Small("REVENUE PER LABOR HOUR"),
@@ -354,27 +414,27 @@ def unified_inventory_callback(inv_js, sales_js, stock, name, cost, thresh):
                      title="Inventory Health Levels", text='Days_of_Cover')
         fig.update_traces(texttemplate='%{text:.1f} Days', textposition='outside')
 
-        # Risk Zone Visual Implementation
         waste_fig = px.scatter(inv_df, x='Days_of_Cover', y=stock, size=inv_df[cost].clip(lower=1), color='Status',
                                hover_name=name, title="Capital Trap Analysis")
         waste_fig.add_vrect(x0=8, x1=12, fillcolor="Red", opacity=0.1, layer="below", line_width=0,
                             annotation_text="HIGH CAPITAL RISK", annotation_position="top right")
         waste_fig.update_layout(template="plotly_white")
     else:
-        fig = px.bar(inv_df, x=name, y=stock);
+        fig = px.bar(inv_df, x=name, y=stock)
         waste_fig = go.Figure()
 
+    # KPI CALLOUTS: Inventory
     kpis = [
         html.Div([html.Small("TOTAL INV VALUE"),
-                  html.Abbr(html.H3(f"${val:,.2f}"), title="Current total capital tied in stock.")],
+                  html.Abbr(html.H3(f"${val:,.2f}"), title="Current total capital tied up in stock.")],
                  style={'flex': '1', 'backgroundColor': '#718096', 'color': 'white', 'padding': '20px',
                         'borderRadius': '12px'}),
         html.Div([html.Small("INV TURNOVER RATIO"),
-                  html.Abbr(html.H3(f"{turnover:.1f}x"), title="Sales vs. Stock value. Goal: >4.0x.")],
+                  html.Abbr(html.H3(f"{turnover:.1f}x"), title="Sales velocity vs. stock value. Goal: >4.0x.")],
                  style={'flex': '1', 'backgroundColor': '#4a5568', 'color': 'white', 'padding': '20px',
                         'borderRadius': '12px'}),
-        html.Div([html.Small("EST. RESTOCK INVESTMENT"),
-                  html.Abbr(html.H3(f"${restock_total:,.2f}"), title="Capital needed for reordering.")],
+        html.Div([html.Small("EST. RESTOCK INVESTMENT"), html.Abbr(html.H3(f"${restock_total:,.2f}"),
+                                                                   title="Capital required to return low items to par levels.")],
                  style={'flex': '1', 'backgroundColor': '#f56565', 'color': 'white', 'padding': '20px',
                         'borderRadius': '12px'}),
     ]
@@ -398,7 +458,7 @@ def generate_reorder_list(n, inv_js, stock_col, name_col, cost_col, threshold):
                                              errors='coerce').fillna(0)
         reorder_df['Total_Line_Cost'] = reorder_df['Units_to_Order'] * reorder_df[cost_col]
     return dcc.send_data_frame(reorder_df[[name_col, stock_col, 'Units_to_Order', 'Total_Line_Cost']].to_csv,
-                               f"StockPilotDev_v3.9.15_Reorder_List.csv", index=False)
+                               f"StockPilot_Reorder_List.csv", index=False)
 
 
 if __name__ == '__main__':
