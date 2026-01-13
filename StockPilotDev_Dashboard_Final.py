@@ -5,6 +5,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 import dash
 from dash import dcc, html, Input, Output, State, exceptions, callback_context
+from scipy import stats  # Added for the new Savings Logic
 
 # --- 1. App Setup ---
 app = dash.Dash(__name__, title="StockPilotDev v3.9.22 | 2026 Strategy Suite")
@@ -194,6 +195,12 @@ app.layout = html.Div([
                 html.Div([html.Label("End Time:"), dcc.Dropdown(id='end-col')], style={'flex': '1'}),
             ], style={'display': 'flex', 'gap': '20px', 'marginBottom': '25px'}),
             html.Div(id='labor-kpi-container', style={'display': 'flex', 'gap': '15px', 'marginBottom': '25px'}),
+
+            # Added: Statistical Waste Alert for Clients
+            html.Div(id='labor-savings-insight',
+                     style={'padding': '20px', 'borderRadius': '10px', 'backgroundColor': '#edf2f7',
+                            'marginBottom': '20px', 'fontSize': '1.1em'}),
+
             dcc.Graph(id='profitability-heatmap')
         ], style={'padding': '30px', 'backgroundColor': '#fff', 'borderRadius': '15px', 'margin': '20px auto',
                   'maxWidth': '1200px', 'border': '1px solid #e2e8f0'}),
@@ -209,6 +216,12 @@ app.layout = html.Div([
                          style={'flex': '0.5'}),
             ], style={'display': 'flex', 'gap': '20px', 'marginBottom': '25px'}),
             html.Div(id='inv-kpi-container', style={'display': 'flex', 'gap': '15px', 'marginBottom': '20px'}),
+
+            # Added: Confidence Interval Savings Insight
+            html.Div(id='inv-savings-insight',
+                     style={'padding': '20px', 'borderRadius': '10px', 'backgroundColor': '#edf2f7',
+                            'marginBottom': '20px', 'fontSize': '1.1em'}),
+
             dcc.Graph(id='inventory-graph'),
 
             html.Div([
@@ -221,7 +234,7 @@ app.layout = html.Div([
             ], style={'paddingTop': '20px'}),
             dcc.Download(id="download-reorder-list")
         ], style={'padding': '30px', 'borderRadius': '15px', 'backgroundColor': '#fff', 'margin': '20px auto',
-                  'maxWidth': '1200px', 'border!': '1px solid #e2e8f0'})
+                  'maxWidth': '1200px', 'border': '1px solid #e2e8f0'})
     ])
 ])
 
@@ -319,7 +332,8 @@ def update_sales(s_js, l_js, i_js, rev, cust, cost_col, stock_col):
 
 
 @app.callback(
-    [Output('labor-kpi-container', 'children'), Output('profitability-heatmap', 'figure')],
+    [Output('labor-kpi-container', 'children'), Output('profitability-heatmap', 'figure'),
+     Output('labor-savings-insight', 'children')],
     [Input('stored-labor-data', 'data'), Input('stored-sales-data', 'data'), Input('wage-col', 'value'),
      Input('start-col', 'value'), Input('end-col', 'value'), Input('sales-col', 'value')],
     prevent_initial_call=True
@@ -330,6 +344,7 @@ def update_labor_logic(l_js, s_js, wage, start, end, rev_col):
     hourly_labor = distribute_wages_hourly(l_df, wage, start, end)
     total_l = hourly_labor['Spent'].sum()
 
+    savings_msg = "Staffing efficiency is currently within normal statistical bounds."
     total_s = 0
     if not s_df.empty and rev_col:
         s_df[rev_col] = pd.to_numeric(s_df[rev_col].astype(str).str.replace('[$,]', '', regex=True),
@@ -341,6 +356,18 @@ def update_labor_logic(l_js, s_js, wage, start, end, rev_col):
 
         rplh = total_s / (len(l_df) or 1)
         labor_pct = (total_l / total_s * 100) if total_s > 0 else 0
+
+        # Strategic Waste Detection (New Section)
+        target_efficiency = 100
+        merged['RPLH'] = merged[rev_col] / merged['Spent'].replace(0, 0.001)
+        t_stat, p_val = stats.ttest_1samp(merged['RPLH'], popmean=target_efficiency)
+
+        if p_val < 0.05 and t_stat < 0:
+            potential_savings = total_l * 0.15
+            savings_msg = html.Span([
+                html.B("🚨 Waste Detected: "),
+                f"Statistical T-Test (p={p_val:.3f}) suggests inefficient staffing. Optimize shifts to save approx. ${potential_savings:,.2f}/mo."
+            ], style={'color': '#e53e3e'})
 
         # LABOR MODEL: High Contrast Alert (v3.9.21)
         labor_pct_threshold = 0.17
@@ -385,12 +412,12 @@ def update_labor_logic(l_js, s_js, wage, start, end, rev_col):
                  style={'flex': '1', 'backgroundColor': '#3182ce', 'color': 'white', 'padding': '20px',
                         'borderRadius': '12px'}),
     ]
-    return kpis, fig
+    return kpis, fig, savings_msg
 
 
 @app.callback(
     [Output('inv-kpi-container', 'children'), Output('inventory-graph', 'figure'),
-     Output('waste-analysis-graph', 'figure')],
+     Output('waste-analysis-graph', 'figure'), Output('inv-savings-insight', 'children')],
     [Input('stored-inventory-data', 'data'), Input('stored-sales-data', 'data'), Input('inv-stock-col', 'value'),
      Input('inv-name-col', 'value'), Input('inv-cost-col', 'value'), Input('reorder-threshold', 'value')],
     prevent_initial_call=True
@@ -405,10 +432,25 @@ def unified_inventory_callback(inv_js, sales_js, stock, name, cost, thresh):
     val = (inv_df[stock] * inv_df[cost]).sum()
     restock_total = (((thresh or 20) * 1.5 - inv_df[stock]).clip(lower=0) * inv_df[cost]).sum()
 
+    inv_savings_msg = "Inventory turnover is currently stable."
     turnover = 0
     if not sales_df.empty:
         turnover = len(sales_df) / (val / 100) if val > 0 else 0
         inv_df = calculate_inventory_health(inv_df, sales_df, stock, thresh or 20)
+
+        # New: Confidence Interval Savings Section
+        mean_stock = inv_df[stock].mean()
+        std_stock = inv_df[stock].std()
+        conf_interval = 1.96 * (std_stock / (len(inv_df) ** 0.5))
+        upper_limit = mean_stock + conf_interval
+
+        excess_capital = inv_df[inv_df[stock] > upper_limit][stock].sum() * inv_df[cost].mean()
+        if excess_capital > 0:
+            inv_savings_msg = html.Span([
+                html.B("💰 Capital Recovery: "),
+                f"95% Confidence Interval suggests you have ${excess_capital:,.2f} in 'Safe' excess stock. Liquidating this recovers trapped cash."
+            ], style={'color': '#2b6cb0'})
+
         fig = px.bar(inv_df, x=name, y=stock, color='Status',
                      color_discrete_map={'CRITICAL': '#e53e3e', 'REORDER': '#ecc94b', 'HEALTHY': '#48bb78'},
                      title="Inventory Health Levels", text='Days_of_Cover')
@@ -438,7 +480,7 @@ def unified_inventory_callback(inv_js, sales_js, stock, name, cost, thresh):
                  style={'flex': '1', 'backgroundColor': '#f56565', 'color': 'white', 'padding': '20px',
                         'borderRadius': '12px'}),
     ]
-    return kpis, fig, waste_fig
+    return kpis, fig, waste_fig, inv_savings_msg
 
 
 @app.callback(
