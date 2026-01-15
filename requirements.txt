@@ -47,6 +47,6 @@ setuptools==58.0.0
 dash
 scipy
 dash-bootstrap-components
-scikit-learns
+scikit-learn
  
  
