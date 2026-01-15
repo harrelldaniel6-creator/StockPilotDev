@@ -264,6 +264,10 @@ def update_business_metrics(s_js, l_js, i_js, rev, cust, price_sim, cost_col, st
 
     if s_js and rev and cust:
         df = safe_load_df(s_js)
+
+        # Merge duplicate customers
+        df[cust] = df[cust].astype(str).str.strip().str.title()
+
         df[rev] = pd.to_numeric(df[rev].astype(str).str.replace('[$,]', '', regex=True), errors='coerce').fillna(0)
 
         sim_multiplier = 1 + (price_sim / 100)
@@ -280,9 +284,12 @@ def update_business_metrics(s_js, l_js, i_js, rev, cust, price_sim, cost_col, st
         sales_fig.add_scatter(x=df_m[date_col], y=df_m['Trend'], name="Strategic Forecast", line=dict(dash='dot'))
         sales_fig.update_layout(yaxis_tickprefix='$', yaxis_tickformat=',.0f', xaxis_title="Date",
                                 yaxis_title="Revenue", template="plotly_white")
+        sales_fig.update_traces(hovertemplate="<b>Date: %{x}</b><br>Projected Revenue: %{y:$,.0f}")
 
-        cust_fig = px.pie(df.groupby(cust)['Display_Rev'].sum().reset_index().nlargest(10, 'Display_Rev'),
-                          values='Display_Rev', names=cust, hole=0.4, title="Customer Share")
+        cust_summary = df.groupby(cust)['Display_Rev'].sum().reset_index().nlargest(10, 'Display_Rev')
+        cust_fig = px.pie(cust_summary, values='Display_Rev', names=cust, hole=0.4, title="Customer Share")
+        cust_fig.update_traces(
+            hovertemplate="<b>Customer: %{label}</b><br>Revenue: %{value:$,.0f}<br>Share: %{percent}")
 
         df['Day'] = df[date_col].dt.day_name()
         day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
@@ -291,13 +298,22 @@ def update_business_metrics(s_js, l_js, i_js, rev, cust, price_sim, cost_col, st
                           color='Display_Rev', color_continuous_scale='RdYlGn')
         heat_fig.update_layout(yaxis_tickprefix='$', yaxis_tickformat=',.0f', xaxis_title="Day of Week",
                                yaxis_title="Simulated Revenue", template="plotly_white")
+        heat_fig.update_traces(hovertemplate="<b>%{x}</b><br>Projected Revenue: %{y:$,.0f}")
 
         total_rev = df['Display_Rev'].sum()
+        est_next = model.predict([[len(df_m)]])[0]
         kpi_cards = [
-            dbc.Col(dbc.Card([html.Small("SIMULATED REVENUE"), html.H3(f"${total_rev:,.0f}")], color="success",
-                             outline=True, className="p-3 text-center")),
-            dbc.Col(dbc.Card([html.Small("EST. NEXT MONTH"), html.H3(f"${model.predict([[len(df_m)]])[0]:,.0f}")],
-                             color="primary", outline=True, className="p-3 text-center")),
+            dbc.Col([
+                dbc.Card([html.Small("SIMULATED REVENUE", id="sim-rev-target"), html.H3(f"${total_rev:,.0f}")],
+                         color="success", outline=True, className="p-3 text-center"),
+                dbc.Tooltip("Total projected revenue based on your price simulation settings.", target="sim-rev-target")
+            ]),
+            dbc.Col([
+                dbc.Card([html.Small("EST. NEXT MONTH", id="est-next-target"), html.H3(f"${est_next:,.0f}")],
+                         color="primary", outline=True, className="p-3 text-center"),
+                dbc.Tooltip("AI-driven forecast for the next 30 days based on scikit-learn trends.",
+                            target="est-next-target")
+            ]),
         ]
 
     if l_js and s_js and all([wage, start, end, rev]):
@@ -321,11 +337,17 @@ def update_business_metrics(s_js, l_js, i_js, rev, cust, price_sim, cost_col, st
             title="Efficiency Matrix (Red = Over-staffed)",
             template="plotly_white"
         )
+        labor_fig.update_traces(hovertemplate="<b>Hour: %{x}</b><br>Amount: %{y:$,.2f}")
 
         total_labor = hourly_labor['Spent'].sum()
         labor_pct = (total_labor / s_df[rev].sum() * 100) if s_df[rev].sum() > 0 else 0
-        labor_kpis = [dbc.Col(dbc.Card([html.Small("LABOR %"), html.H4(f"{labor_pct:.1f}%")], color="secondary",
-                                       className="p-3 text-center"))]
+        labor_kpis = [
+            dbc.Col([
+                dbc.Card([html.Small("LABOR %", id="labor-pct-target"), html.H4(f"{labor_pct:.1f}%")],
+                         color="secondary", className="p-3 text-center"),
+                dbc.Tooltip("Percentage of total revenue spent on labor costs.", target="labor-pct-target")
+            ])
+        ]
 
         t, p = stats.ttest_1samp(merged[rev] / merged['Spent'].replace(0, 0.001), popmean=100)
         if p < 0.05 and t < 0:
@@ -345,6 +367,13 @@ def update_business_metrics(s_js, l_js, i_js, rev, cust, price_sim, cost_col, st
 def unified_inventory_callback(inv_js, sales_js, stock, name, cost, thresh):
     if not inv_js or not stock or not name or not cost: raise exceptions.PreventUpdate
     inv_df, sales_df = safe_load_df(inv_js), safe_load_df(sales_js)
+
+    # Clean and standardize names to merge duplicates (Ribeye, Butter, etc.)
+    inv_df[name] = inv_df[name].astype(str).str.strip().str.title()
+
+    # Aggregating by name to ensure duplicates are merged on chart
+    inv_df = inv_df.groupby(name).agg({stock: 'sum', cost: 'mean'}).reset_index()
+
     inv_df[stock] = pd.to_numeric(inv_df[stock], errors='coerce').fillna(0)
     inv_df[cost] = pd.to_numeric(inv_df[cost].astype(str).str.replace('[$,]', '', regex=True), errors='coerce').fillna(
         0)
@@ -358,11 +387,19 @@ def unified_inventory_callback(inv_js, sales_js, stock, name, cost, thresh):
         inv_df = calculate_inventory_health(inv_df, sales_df, stock, thresh or 20)
         fig = px.bar(inv_df, x=name, y=stock, color='Status', title="Inventory Health")
         fig.update_layout(template="plotly_white")
+        fig.update_traces(hovertemplate="<b>%{x}</b><br>Current Stock: %{y}")
 
         waste_fig = px.scatter(inv_df, x='Days_of_Cover', y=(inv_df[stock] * inv_df[cost]), color='Status',
                                size=inv_df[cost].clip(lower=1), title="Capital Risk (Cash vs. Velocity)")
-        waste_fig.update_layout(yaxis_tickprefix='$', yaxis_tickformat=',.2f', xaxis_title="Days of Supply Remaining",
-                                yaxis_title="Cash Tied Up in Stock", template="plotly_white")
+        waste_fig.update_layout(
+            xaxis=dict(range=[0, 15]),  # Fixes the scale so dots don't cluster as much
+            yaxis_tickprefix='$',
+            yaxis_tickformat=',.2f',
+            template="plotly_white"
+        )
+        waste_fig.update_traces(
+            hovertemplate="<b>%{customdata[0]}</b><br>Cash Tied Up: %{y:$,.2f}<br>Days Supply: %{x:.1f}",
+            customdata=inv_df[[name]])
 
         upper = inv_df[stock].mean() + (1.96 * (inv_df[stock].std() / (len(inv_df) ** 0.5)))
         excess = inv_df[inv_df[stock] > upper][stock].sum() * inv_df[cost].mean()
@@ -372,8 +409,13 @@ def unified_inventory_callback(inv_js, sales_js, stock, name, cost, thresh):
         fig = px.bar(inv_df, x=name, y=stock);
         waste_fig = go.Figure()
 
-    kpis = [dbc.Col(dbc.Card([html.Small("TOTAL VALUE"), html.H4(f"${val:,.0f}")], color="dark", outline=True,
-                             className="p-3 text-center"))]
+    kpis = [
+        dbc.Col([
+            dbc.Card([html.Small("TOTAL VALUE", id="total-val-target"), html.H4(f"${val:,.0f}")],
+                     color="dark", outline=True, className="p-3 text-center"),
+            dbc.Tooltip("Sum total monetary value of current inventory on hand.", target="total-val-target")
+        ])
+    ]
     return kpis, fig, waste_fig, msg
 
 
