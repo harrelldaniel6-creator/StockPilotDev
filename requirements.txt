@@ -42,6 +42,12 @@ streamlit
 pandas
 ShopifyAPI
 plotly
+reportlab
 setuptools==58.0.0
 dash
+<<<<<<< HEAD
 scipy
+=======
+scipy
+>>>>>>> 727488840f5212a5eb6ee3ed6e7f889d355a48fd
+

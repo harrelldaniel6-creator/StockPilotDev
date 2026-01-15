@@ -1,39 +1,38 @@
 import base64
 import io
+import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
 import dash
 from dash import dcc, html, Input, Output, State, exceptions, callback_context
-from scipy import stats  # Added for the new Savings Logic
+import dash_bootstrap_components as dbc
+from scipy import stats
+from sklearn.linear_model import LinearRegression
+from reportlab.pdfgen import canvas
 
 # --- 1. App Setup ---
-app = dash.Dash(__name__, title="StockPilotDev v3.9.22 | 2026 Strategy Suite")
+app = dash.Dash(
+    __name__,
+    external_stylesheets=[dbc.themes.SLATE],
+    title="StockPilotDev v4.5 | 2026 Strategy Suite"
+)
 server = app.server
 
 
 # --- 2. Helper Functions ---
 def parse_contents(contents, filename):
-    """
-    Decodes uploaded files and converts them to a JSON string for browser storage.
-    Includes automatic date detection for time-series analysis.
-    """
-    if contents is None:
-        return None
+    if contents is None: return None
     try:
         content_type, content_string = contents.split(',')
         decoded = base64.b64decode(content_string)
-
-        # Determine file type and read into DataFrame
         if 'csv' in filename.lower():
             df = pd.read_csv(io.StringIO(decoded.decode('utf-8')))
         elif 'xls' in filename.lower():
             df = pd.read_excel(io.BytesIO(decoded))
         else:
-            print(f"Unsupported file type: {filename}")
             return None
 
-        # Automatic Date Conversion for any column containing date-like strings
         for col in df.columns:
             if df[col].dtype == 'object':
                 try:
@@ -42,20 +41,15 @@ def parse_contents(contents, filename):
                         df[col] = temp_dates
                 except:
                     pass
-
-        print(f"Successfully parsed: {filename} ({len(df)} rows)")
         return df.to_json(date_format='iso', orient='split')
-    except Exception as e:
-        print(f"CRITICAL ERROR parsing {filename}: {e}")
+    except Exception:
         return None
 
 
 def safe_load_df(json_data):
-    """Safely reconstructs a Pandas DataFrame from JSON storage."""
     if not json_data: return pd.DataFrame()
     try:
         df = pd.read_json(io.StringIO(json_data), orient='split')
-        # Re-ensure datetime objects after JSON serialization
         dt_cols = df.select_dtypes(include=['object']).columns
         for col in dt_cols:
             try:
@@ -63,180 +57,152 @@ def safe_load_df(json_data):
             except:
                 pass
         return df
-    except Exception as e:
-        print(f"Error loading JSON to DF: {e}")
+    except Exception:
         return pd.DataFrame()
 
 
 def distribute_wages_hourly(df, wage_col, start_col, end_col):
-    """Distributes total shift wages across individual hours for profitability analysis."""
     hourly_costs = []
     for _, row in df.iterrows():
         try:
             start, end = row[start_col], row[end_col]
             if pd.isna(start) or pd.isna(end): continue
-
             total_wage = row[wage_col]
             duration_hours = (end - start).total_seconds() / 3600
             if duration_hours <= 0: continue
-
             wage_per_hour = total_wage / duration_hours
-
             curr = start
             while curr < end:
                 next_hour = curr.replace(minute=0, second=0, microsecond=0) + pd.Timedelta(hours=1)
                 seg_end = min(next_hour, end)
                 segment_duration = (seg_end - curr).total_seconds() / 3600
-
-                hourly_costs.append({
-                    'Hour': curr.hour,
-                    'Spent': segment_duration * wage_per_hour
-                })
+                hourly_costs.append({'Hour': curr.hour, 'Spent': segment_duration * wage_per_hour})
                 curr = seg_end
-        except:
+        except Exception:
             continue
-
     res = pd.DataFrame(hourly_costs)
     if res.empty: return pd.DataFrame(columns=['Hour', 'Spent'])
     return res.groupby('Hour')['Spent'].sum().reset_index()
 
 
 def calculate_inventory_health(inv_df, sales_df, stock_col, threshold):
-    """Calculates burn rates and days of cover based on recent sales velocity."""
     date_col = sales_df.select_dtypes(include=['datetime64']).columns[0]
     days_active = (sales_df[date_col].max() - sales_df[date_col].min()).days or 1
-
-    total_sales_units = len(sales_df)
-    daily_velocity = total_sales_units / days_active
-
+    daily_velocity = len(sales_df) / days_active
     inv_df['Daily_Burn'] = daily_velocity / len(inv_df)
     inv_df['Days_of_Cover'] = inv_df[stock_col] / inv_df['Daily_Burn'].replace(0, 0.001)
-
-    def get_status(row):
-        if row[stock_col] <= (threshold * 0.5): return 'CRITICAL'
-        if row[stock_col] < threshold: return 'REORDER'
-        return 'HEALTHY'
-
-    inv_df['Status'] = inv_df.apply(get_status, axis=1)
+    inv_df['Status'] = inv_df.apply(lambda r: 'CRITICAL' if r[stock_col] <= (threshold * 0.5) else (
+        'REORDER' if r[stock_col] < threshold else 'HEALTHY'), axis=1)
     return inv_df
 
 
 def route_by_score(df, labor, sales, inv):
-    """Smart routing: determines if a file is Sales, Labor, or Inventory based on headers."""
     l_keys = {'wage', 'pay', 'employee', 'staff', 'clock', 'start', 'end', 'shift', 'labor', 'payroll'}
     i_keys = {'stock', 'qty', 'product', 'item', 'inventory', 'sku', 'reorder', 'count'}
     s_keys = {'revenue', 'sales', 'transaction', 'price', 'customer', 'ticket', 'total', 'receipt'}
-
-    cols = [str(col).lower().replace('_', ' ').replace('-', ' ') for col in df.columns]
+    cols = [str(col).lower() for col in df.columns]
     js = df.to_json(date_format='iso', orient='split')
-
-    l_score = len([k for k in l_keys if any(k in c for c in cols)])
-    i_score = len([k for k in i_keys if any(k in c for c in cols)])
-    s_score = len([k for k in s_keys if any(k in c for c in cols)])
-
-    if l_score > i_score and l_score > s_score:
+    l_s = len([k for k in l_keys if any(k in c for c in cols)])
+    i_s = len([k for k in i_keys if any(k in c for c in cols)])
+    s_s = len([k for k in s_keys if any(k in c for c in cols)])
+    if l_s > i_s and l_s > s_s:
         return js, sales, inv
-    elif i_score > l_score and i_score > s_score:
+    elif i_s > l_s and i_s > s_s:
         return labor, sales, js
     else:
         return labor, js, inv
 
 
 # --- 3. App Layout ---
-app.layout = html.Div([
+app.layout = dbc.Container([
     dcc.Store(id='stored-labor-data', storage_type='session'),
     dcc.Store(id='stored-sales-data', storage_type='session'),
     dcc.Store(id='stored-inventory-data', storage_type='session'),
 
-    html.Div([
-        html.H1("StockPilotDev: Integrated Strategy Suite (v3.9.22)", style={'color': '#ffffff', 'margin': '0'}),
-        html.P("2026 SMB Command Center | Sales, Labor & Inventory", style={'color': '#cbd5e0'})
-    ], style={'backgroundColor': '#2d3748', 'padding': '40px 20px', 'textAlign': 'center',
-              'borderRadius': '0 0 20px 20px'}),
+    dbc.Row([
+        dbc.Col([
+            html.H1("StockPilotDev Strategy Suite", className="text-center mt-4"),
+            html.P("v4.5 | 2026 Small Business Intelligence Dashboard", className="text-center text-muted"),
+            dbc.Button("📄 Generate Executive PDF Report", id="btn-pdf", color="light",
+                       className="mb-4 mx-auto d-block"),
+            dcc.Download(id="download-pdf")
+        ])
+    ]),
 
-    html.Div([
-        # Upload & Reset Logic
-        html.Div([
+    dbc.Row([
+        dbc.Col([
             dcc.Upload(
                 id='upload-data',
-                children=html.Div(['Drag & Drop Files or ', html.A('Select Files')]),
+                children=html.Div(['Drag & Drop or ', html.A('Select Files')]),
                 multiple=True,
-                style={'width': '100%', 'height': '80px', 'lineHeight': '80px', 'borderWidth': '2px',
-                       'borderStyle': 'dashed', 'borderRadius': '10px', 'textAlign': 'center',
-                       'backgroundColor': '#fff', 'margin': '20px 0'}
+                style={'border': '2px dashed #6c757d', 'borderRadius': '10px', 'padding': '20px', 'textAlign': 'center',
+                       'backgroundColor': '#343a40'}
             ),
-            html.Button("Reset Session", id="reset-btn",
-                        style={'backgroundColor': '#e53e3e', 'color': 'white', 'padding': '10px 25px',
-                               'borderRadius': '8px', 'border': 'none', 'display': 'block', 'margin': '0 auto',
-                               'cursor': 'pointer'})
-        ], style={'maxWidth': '800px', 'margin': '0 auto'}),
+            dbc.Button("Reset Session", id="reset-btn", color="danger", className="mt-2 w-100")
+        ], width=12, lg=6, className="mx-auto mb-4")
+    ]),
 
-        # PILLAR 1: Sales & Financials
-        html.Div([
-            html.H2("📈 Sales & Financials", style={'color': '#38a169'}),
-            html.Div([
-                html.Div([html.Label("Revenue Col:"), dcc.Dropdown(id='sales-col')], style={'flex': '1'}),
-                html.Div([html.Label("Cust ID Col:"), dcc.Dropdown(id='cust-col')], style={'flex': '1'}),
-            ], style={'display': 'flex', 'gap': '20px', 'marginBottom': '25px'}),
-            html.Div(id='topline-stats', style={'display': 'flex', 'gap': '15px', 'marginBottom': '25px'}),
-            html.Div([
-                dcc.Graph(id='sales-trend-graph', style={'flex': '1'}),
-                dcc.Graph(id='customer-share-graph', style={'flex': '1'})
-            ], style={'display': 'flex', 'gap': '20px'})
-        ], style={'padding': '30px', 'backgroundColor': '#fff', 'borderRadius': '15px', 'margin': '20px auto',
-                  'maxWidth': '1200px', 'border': '1px solid #e2e8f0'}),
+    dbc.Tabs([
+        dbc.Tab(label="📈 Sales & Strategy", children=[
+            dbc.Card([
+                dbc.CardBody([
+                    dbc.Row([
+                        dbc.Col([html.Label("Revenue Col:"), dcc.Dropdown(id='sales-col')], width=3),
+                        dbc.Col([html.Label("Cust ID Col:"), dcc.Dropdown(id='cust-col')], width=3),
+                        dbc.Col([
+                            html.Label("Scenario Simulation (% Price Change):"),
+                            dcc.Slider(id='price-slider', min=-20, max=50, step=5, value=0,
+                                       marks={-20: '-20%', 0: '0', 50: '+50%'})
+                        ], width=6),
+                    ], className="mb-4"),
+                    dbc.Row(id='topline-stats', className="mb-4"),
+                    dbc.Row([
+                        dbc.Col(dcc.Graph(id='sales-trend-graph'), lg=6),
+                        dbc.Col(dcc.Graph(id='customer-share-graph'), lg=3),
+                        dbc.Col(dcc.Graph(id='day-heatmap'), lg=3)
+                    ])
+                ])
+            ], className="mt-3 shadow")
+        ], tab_id="sales-tab"),
 
-        # PILLAR 2: Labor & Peak Efficiency
-        html.Div([
-            html.H2("👥 Labor & Peak Efficiency", style={'color': '#5a67d8'}),
-            html.Div([
-                html.Div([html.Label("Wage Col:"), dcc.Dropdown(id='wage-col')], style={'flex': '1'}),
-                html.Div([html.Label("Start Time:"), dcc.Dropdown(id='start-col')], style={'flex': '1'}),
-                html.Div([html.Label("End Time:"), dcc.Dropdown(id='end-col')], style={'flex': '1'}),
-            ], style={'display': 'flex', 'gap': '20px', 'marginBottom': '25px'}),
-            html.Div(id='labor-kpi-container', style={'display': 'flex', 'gap': '15px', 'marginBottom': '25px'}),
+        dbc.Tab(label="👥 Labor Efficiency", children=[
+            dbc.Card([
+                dbc.CardBody([
+                    dbc.Row([
+                        dbc.Col([html.Label("Wage:"), dcc.Dropdown(id='wage-col')], md=4),
+                        dbc.Col([html.Label("Start:"), dcc.Dropdown(id='start-col')], md=4),
+                        dbc.Col([html.Label("End:"), dcc.Dropdown(id='end-col')], md=4),
+                    ], className="mb-3"),
+                    html.Div(id='labor-savings-insight', className="alert alert-info mb-3"),
+                    dbc.Row(id='labor-kpi-container', className="mb-3"),
+                    dcc.Graph(id='profitability-heatmap')
+                ])
+            ], className="mt-3 shadow")
+        ], tab_id="labor-tab"),
 
-            # Added: Statistical Waste Alert for Clients
-            html.Div(id='labor-savings-insight',
-                     style={'padding': '20px', 'borderRadius': '10px', 'backgroundColor': '#edf2f7',
-                            'marginBottom': '20px', 'fontSize': '1.1em'}),
-
-            dcc.Graph(id='profitability-heatmap')
-        ], style={'padding': '30px', 'backgroundColor': '#fff', 'borderRadius': '15px', 'margin': '20px auto',
-                  'maxWidth': '1200px', 'border': '1px solid #e2e8f0'}),
-
-        # PILLAR 3: Inventory Intelligence
-        html.Div([
-            html.H2("📦 Inventory Intelligence", style={'color': '#718096'}),
-            html.Div([
-                html.Div([html.Label("Stock Qty Col:"), dcc.Dropdown(id='inv-stock-col')], style={'flex': '1'}),
-                html.Div([html.Label("Product Name:"), dcc.Dropdown(id='inv-name-col')], style={'flex': '1'}),
-                html.Div([html.Label("Unit Cost Col:"), dcc.Dropdown(id='inv-cost-col')], style={'flex': '1'}),
-                html.Div([html.Label("Reorder Pt:"), dcc.Input(id='reorder-threshold', type='number', value=20)],
-                         style={'flex': '0.5'}),
-            ], style={'display': 'flex', 'gap': '20px', 'marginBottom': '25px'}),
-            html.Div(id='inv-kpi-container', style={'display': 'flex', 'gap': '15px', 'marginBottom': '20px'}),
-
-            # Added: Confidence Interval Savings Insight
-            html.Div(id='inv-savings-insight',
-                     style={'padding': '20px', 'borderRadius': '10px', 'backgroundColor': '#edf2f7',
-                            'marginBottom': '20px', 'fontSize': '1.1em'}),
-
-            dcc.Graph(id='inventory-graph'),
-
-            html.Div([
-                html.H3("🚨 Dead Stock & Capital Risk", style={'color': '#e53e3e', 'marginTop': '40px'}),
-                dcc.Graph(id='waste-analysis-graph'),
-                html.Button("📥 Generate Reorder List", id="btn-reorder-list",
-                            style={'backgroundColor': '#3182ce', 'color': 'white', 'padding': '15px 30px',
-                                   'borderRadius': '10px', 'border': 'none', 'marginTop': '25px', 'fontWeight': 'bold',
-                                   'cursor': 'pointer'})
-            ], style={'paddingTop': '20px'}),
-            dcc.Download(id="download-reorder-list")
-        ], style={'padding': '30px', 'borderRadius': '15px', 'backgroundColor': '#fff', 'margin': '20px auto',
-                  'maxWidth': '1200px', 'border': '1px solid #e2e8f0'})
-    ])
-])
+        dbc.Tab(label="📦 Inventory Health", children=[
+            dbc.Card([
+                dbc.CardBody([
+                    dbc.Row([
+                        dbc.Col([html.Label("Stock:"), dcc.Dropdown(id='inv-stock-col')], md=3),
+                        dbc.Col([html.Label("Name:"), dcc.Dropdown(id='inv-name-col')], md=3),
+                        dbc.Col([html.Label("Cost:"), dcc.Dropdown(id='inv-cost-col')], md=3),
+                        dbc.Col([html.Label("Threshold:"),
+                                 dcc.Input(id='reorder-threshold', type='number', value=20, className="form-control")],
+                                md=3),
+                    ], className="mb-3"),
+                    html.Div(id='inv-savings-insight', className="alert alert-primary mb-3"),
+                    dbc.Row(id='inv-kpi-container', className="mb-3"),
+                    dcc.Graph(id='inventory-graph'),
+                    dcc.Graph(id='waste-analysis-graph'),
+                    dbc.Button("📥 Download Reorder List", id="btn-reorder-list", color="primary",
+                               className="mt-3 w-100"),
+                    dcc.Download(id="download-reorder-list")
+                ])
+            ], className="mt-3 shadow")
+        ], tab_id="inventory-tab")
+    ], id="tabs", active_tab="sales-tab")
+], fluid=True)
 
 
 # --- 4. Callbacks ---
@@ -272,147 +238,101 @@ def sync_drops(s, l, i):
 
 
 @app.callback(
-    [Output('topline-stats', 'children'), Output('sales-trend-graph', 'figure'),
-     Output('customer-share-graph', 'figure')],
-    [Input('stored-sales-data', 'data'), Input('stored-labor-data', 'data'), Input('stored-inventory-data', 'data'),
-     Input('sales-col', 'value'), Input('cust-col', 'value'), Input('inv-cost-col', 'value'),
-     Input('inv-stock-col', 'value')],
-    prevent_initial_call=True
-)
-def update_sales(s_js, l_js, i_js, rev, cust, cost_col, stock_col):
-    if not s_js or not rev or not cust: raise exceptions.PreventUpdate
-    df = safe_load_df(s_js)
-    df[rev] = pd.to_numeric(df[rev].astype(str).str.replace('[$,]', '', regex=True), errors='coerce').fillna(0)
-    total_rev = df[rev].sum()
-    atv = total_rev / len(df) if not df.empty else 0
-
-    total_labor = 0
-    if l_js:
-        df_l = safe_load_df(l_js)
-        numeric_cols = df_l.select_dtypes(include=['number']).columns
-        if not numeric_cols.empty: total_labor = df_l[numeric_cols[0]].sum()
-
-    total_cogs = 0
-    if i_js and cost_col and stock_col:
-        df_i = safe_load_df(i_js)
-        df_i[cost_col] = pd.to_numeric(df_i[cost_col].astype(str).str.replace('[$,]', '', regex=True),
-                                       errors='coerce').fillna(0)
-        total_cogs = (df_i[stock_col] * df_i[cost_col]).sum() * 0.3
-
-    gross_margin = ((total_rev - total_cogs) / total_rev * 100) if total_rev > 0 else 0
-    net_profit = ((total_rev - total_labor - total_cogs) / total_rev * 100) if total_rev > 0 else 0
-
-    # KPI CALLOUTS: Sales
-    kpi_cards = [
-        html.Div([html.Small("REVENUE"),
-                  html.Abbr(html.H2(f"${total_rev:,.0f}"), title="Total gross sales. Goal: 5% monthly growth.")],
-                 style={'backgroundColor': '#38a169', 'color': 'white', 'padding': '20px', 'borderRadius': '12px',
-                        'flex': '1'}),
-        html.Div([html.Small("AVG TRANSACTION"),
-                  html.Abbr(html.H2(f"${atv:,.2f}"), title="Total Rev / Total Transactions. Goal: >$500.")],
-                 style={'backgroundColor': '#2f855a', 'color': 'white', 'padding': '20px', 'borderRadius': '12px',
-                        'flex': '1'}),
-        html.Div([html.Small("GROSS MARGIN"),
-                  html.Abbr(html.H2(f"{gross_margin:.1f}%"), title="Revenue minus Estimated COGS. Target: >40%.")],
-                 style={'backgroundColor': '#276749', 'color': 'white', 'padding': '20px', 'borderRadius': '12px',
-                        'flex': '1'}),
-        html.Div([html.Small("NET PROFIT"),
-                  html.Abbr(html.H2(f"{net_profit:.1f}%"), title="Profit after all Labor and COGS. Target: >15%.")],
-                 style={'backgroundColor': '#22543d', 'color': 'white', 'padding': '20px', 'borderRadius': '12px',
-                        'flex': '1'}),
-    ]
-
-    date_col = df.select_dtypes(include=['datetime64']).columns[0]
-    df_monthly = df.set_index(date_col).resample('MS')[rev].sum().reset_index()
-    fig1 = px.line(df_monthly, x=date_col, y=rev, title="Monthly Sales Trend (Aggregated)")
-    fig1.update_layout(yaxis_tickprefix='$', yaxis_tickformat=',.0f', template="plotly_white")
-    fig2 = px.pie(df.groupby(cust)[rev].sum().reset_index().nlargest(10, rev), values=rev, names=cust, hole=0.4,
-                  title="Revenue Share by Customer")
-    return kpi_cards, fig1, fig2
-
-
-@app.callback(
-    [Output('labor-kpi-container', 'children'), Output('profitability-heatmap', 'figure'),
+    [Output('topline-stats', 'children'),
+     Output('sales-trend-graph', 'figure'),
+     Output('customer-share-graph', 'figure'),
+     Output('day-heatmap', 'figure'),
+     Output('labor-kpi-container', 'children'),
+     Output('profitability-heatmap', 'figure'),
      Output('labor-savings-insight', 'children')],
-    [Input('stored-labor-data', 'data'), Input('stored-sales-data', 'data'), Input('wage-col', 'value'),
-     Input('start-col', 'value'), Input('end-col', 'value'), Input('sales-col', 'value')],
+    [Input('stored-sales-data', 'data'),
+     Input('stored-labor-data', 'data'),
+     Input('stored-inventory-data', 'data'),
+     Input('sales-col', 'value'),
+     Input('cust-col', 'value'),
+     Input('price-slider', 'value'),
+     Input('inv-cost-col', 'value'),
+     Input('inv-stock-col', 'value'),
+     Input('wage-col', 'value'),
+     Input('start-col', 'value'),
+     Input('end-col', 'value')],
     prevent_initial_call=True
 )
-def update_labor_logic(l_js, s_js, wage, start, end, rev_col):
-    if not l_js or not all([wage, start, end]): raise exceptions.PreventUpdate
-    l_df, s_df = safe_load_df(l_js), safe_load_df(s_js)
-    hourly_labor = distribute_wages_hourly(l_df, wage, start, end)
-    total_l = hourly_labor['Spent'].sum()
+def update_business_metrics(s_js, l_js, i_js, rev, cust, price_sim, cost_col, stock_col, wage, start, end):
+    kpi_cards, sales_fig, cust_fig, heat_fig = [], go.Figure(), go.Figure(), go.Figure()
+    labor_kpis, labor_fig, savings_msg = [], go.Figure(), "Awaiting data intake..."
 
-    savings_msg = "Staffing efficiency is currently within normal statistical bounds."
-    total_s = 0
-    if not s_df.empty and rev_col:
-        s_df[rev_col] = pd.to_numeric(s_df[rev_col].astype(str).str.replace('[$,]', '', regex=True),
-                                      errors='coerce').fillna(0)
-        total_s = s_df[rev_col].sum()
+    if s_js and rev and cust:
+        df = safe_load_df(s_js)
+        df[rev] = pd.to_numeric(df[rev].astype(str).str.replace('[$,]', '', regex=True), errors='coerce').fillna(0)
+
+        sim_multiplier = 1 + (price_sim / 100)
+        df['Display_Rev'] = df[rev] * sim_multiplier
+
+        date_col = df.select_dtypes(include=['datetime64']).columns[0]
+        df_m = df.set_index(date_col).resample('MS')['Display_Rev'].sum().reset_index()
+        X = np.array(range(len(df_m))).reshape(-1, 1)
+        model = LinearRegression().fit(X, df_m['Display_Rev'].values)
+        df_m['Trend'] = model.predict(X)
+
+        sales_fig = px.line(df_m, x=date_col, y='Display_Rev',
+                            title=f"Sales Performance (Simulated at {price_sim}% change)")
+        sales_fig.add_scatter(x=df_m[date_col], y=df_m['Trend'], name="Strategic Forecast", line=dict(dash='dot'))
+        sales_fig.update_layout(yaxis_tickprefix='$', yaxis_tickformat=',.0f', xaxis_title="Date",
+                                yaxis_title="Revenue", template="plotly_white")
+
+        cust_fig = px.pie(df.groupby(cust)['Display_Rev'].sum().reset_index().nlargest(10, 'Display_Rev'),
+                          values='Display_Rev', names=cust, hole=0.4, title="Customer Share")
+
+        df['Day'] = df[date_col].dt.day_name()
+        day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+        day_perf = df.groupby('Day')['Display_Rev'].sum().reindex(day_order).reset_index()
+        heat_fig = px.bar(day_perf, x='Day', y='Display_Rev', title="Staffing Guide: Revenue by Day",
+                          color='Display_Rev', color_continuous_scale='RdYlGn')
+        heat_fig.update_layout(yaxis_tickprefix='$', yaxis_tickformat=',.0f', xaxis_title="Day of Week",
+                               yaxis_title="Simulated Revenue", template="plotly_white")
+
+        total_rev = df['Display_Rev'].sum()
+        kpi_cards = [
+            dbc.Col(dbc.Card([html.Small("SIMULATED REVENUE"), html.H3(f"${total_rev:,.0f}")], color="success",
+                             outline=True, className="p-3 text-center")),
+            dbc.Col(dbc.Card([html.Small("EST. NEXT MONTH"), html.H3(f"${model.predict([[len(df_m)]])[0]:,.0f}")],
+                             color="primary", outline=True, className="p-3 text-center")),
+        ]
+
+    if l_js and s_js and all([wage, start, end, rev]):
+        l_df, s_df = safe_load_df(l_js), safe_load_df(s_js)
+        hourly_labor = distribute_wages_hourly(l_df, wage, start, end)
+        s_df[rev] = pd.to_numeric(s_df[rev].astype(str).str.replace('[$,]', '', regex=True), errors='coerce').fillna(0)
         s_df['Hour'] = pd.to_datetime(s_df.iloc[:, 0]).dt.hour
-        hourly_sales = s_df.groupby('Hour')[rev_col].sum().reset_index()
-        merged = pd.merge(hourly_labor, hourly_sales, on='Hour', how='outer').fillna(0)
+        merged = pd.merge(hourly_labor, s_df.groupby('Hour')[rev].sum().reset_index(), on='Hour', how='outer').fillna(0)
 
-        rplh = total_s / (len(l_df) or 1)
-        labor_pct = (total_l / total_s * 100) if total_s > 0 else 0
+        color_map = ["#e53e3e" if (r['Spent'] / r[rev] if r[rev] > 0 else 1.0) > 0.25 else "#718096" for _, r in
+                     merged.iterrows()]
+        labor_fig = go.Figure()
+        labor_fig.add_trace(go.Bar(x=merged['Hour'], y=merged[rev], name='Revenue', marker_color='#3182ce'))
+        labor_fig.add_trace(go.Bar(x=merged['Hour'], y=merged['Spent'], name='Labor Cost', marker_color=color_map))
+        labor_fig.update_layout(
+            yaxis_tickprefix='$',
+            yaxis_tickformat=',.2f',
+            xaxis=dict(title="Hour of Day", tickmode='array', tickvals=list(range(24)),
+                       ticktext=[f"{h % 12 or 12} {'AM' if h < 12 else 'PM'}" for h in range(24)]),
+            barmode='group',
+            title="Efficiency Matrix (Red = Over-staffed)",
+            template="plotly_white"
+        )
 
-        # Strategic Waste Detection (New Section)
-        target_efficiency = 100
-        merged['RPLH'] = merged[rev_col] / merged['Spent'].replace(0, 0.001)
-        t_stat, p_val = stats.ttest_1samp(merged['RPLH'], popmean=target_efficiency)
+        total_labor = hourly_labor['Spent'].sum()
+        labor_pct = (total_labor / s_df[rev].sum() * 100) if s_df[rev].sum() > 0 else 0
+        labor_kpis = [dbc.Col(dbc.Card([html.Small("LABOR %"), html.H4(f"{labor_pct:.1f}%")], color="secondary",
+                                       className="p-3 text-center"))]
 
-        if p_val < 0.05 and t_stat < 0:
-            potential_savings = total_l * 0.15
-            savings_msg = html.Span([
-                html.B("🚨 Waste Detected: "),
-                f"Statistical T-Test (p={p_val:.3f}) suggests inefficient staffing. Optimize shifts to save approx. ${potential_savings:,.2f}/mo."
-            ], style={'color': '#e53e3e'})
+        t, p = stats.ttest_1samp(merged[rev] / merged['Spent'].replace(0, 0.001), popmean=100)
+        if p < 0.05 and t < 0:
+            savings_msg = html.Span([html.B("🚨 Waste Detected: "),
+                                     f"T-Test confirms inefficiency. Shift changes could save approx. ${total_labor * 0.15:,.2f}."])
 
-        # LABOR MODEL: High Contrast Alert (v3.9.21)
-        labor_pct_threshold = 0.17
-        bar_colors = []
-        for idx, row in merged.iterrows():
-            hourly_rev = row[rev_col] if row[rev_col] > 0 else 0.01
-            current_pct = row['Spent'] / hourly_rev
-            if current_pct >= labor_pct_threshold:
-                bar_colors.append('#D00000')  # Critical Alert Red
-            else:
-                bar_colors.append('#A0AEC0')  # Slate Gray Efficient
-
-        fig = px.bar(merged, x='Hour', y=[rev_col, 'Spent'], barmode='group',
-                     title="Profitability: Sales vs Labor Spend",
-                     color_discrete_map={rev_col: '#2B6CB0'})  # Dark Blue Revenue
-
-        fig.update_traces(marker_color=bar_colors, selector=dict(name='Spent'))
-
-        time_labels = {h: f"{h if h <= 12 and h != 0 else abs(h - 12)} {'AM' if h < 12 else 'PM'}" for h in range(24)}
-        time_labels[0] = "12 AM";
-        time_labels[12] = "12 PM"
-        fig.update_layout(
-            xaxis=dict(tickmode='array', tickvals=list(range(24)), ticktext=[time_labels[h] for h in range(24)]),
-            yaxis_tickprefix='$', yaxis_tickformat=',.2f', template="plotly_white")
-    else:
-        rplh = 0;
-        labor_pct = 0
-        fig = px.bar(hourly_labor, x='Hour', y='Spent', title="Labor Cost Distribution")
-
-    # KPI CALLOUTS: Labor
-    kpis = [
-        html.Div([html.Small("TOTAL LABOR SPEND"),
-                  html.Abbr(html.H3(f"${total_l:,.2f}"), title="Total gross wages paid across all shifts.")],
-                 style={'flex': '1', 'backgroundColor': '#5a67d8', 'color': 'white', 'padding': '20px',
-                        'borderRadius': '12px'}),
-        html.Div([html.Small("LABOR % OF SALES"), html.Abbr(html.H3(f"{labor_pct:.1f}%"),
-                                                            title="Wages as % of Revenue. Goal: <25%. Currently at 13.5%.")],
-                 style={'flex': '1', 'backgroundColor': '#4c51bf', 'color': 'white', 'padding': '20px',
-                        'borderRadius': '12px'}),
-        html.Div([html.Small("REVENUE PER LABOR HOUR"),
-                  html.Abbr(html.H3(f"${rplh:,.2f}"), title="Total Rev / Total Labor Hours. Target: >$100.")],
-                 style={'flex': '1', 'backgroundColor': '#3182ce', 'color': 'white', 'padding': '20px',
-                        'borderRadius': '12px'}),
-    ]
-    return kpis, fig, savings_msg
+    return kpi_cards, sales_fig, cust_fig, heat_fig, labor_kpis, labor_fig, savings_msg
 
 
 @app.callback(
@@ -430,77 +350,66 @@ def unified_inventory_callback(inv_js, sales_js, stock, name, cost, thresh):
         0)
 
     val = (inv_df[stock] * inv_df[cost]).sum()
-    restock_total = (((thresh or 20) * 1.5 - inv_df[stock]).clip(lower=0) * inv_df[cost]).sum()
+    turnover = 0;
+    msg = "Turnover within bounds."
 
-    inv_savings_msg = "Inventory turnover is currently stable."
-    turnover = 0
     if not sales_df.empty:
         turnover = len(sales_df) / (val / 100) if val > 0 else 0
         inv_df = calculate_inventory_health(inv_df, sales_df, stock, thresh or 20)
+        fig = px.bar(inv_df, x=name, y=stock, color='Status', title="Inventory Health")
+        fig.update_layout(template="plotly_white")
 
-        # New: Confidence Interval Savings Section
-        mean_stock = inv_df[stock].mean()
-        std_stock = inv_df[stock].std()
-        conf_interval = 1.96 * (std_stock / (len(inv_df) ** 0.5))
-        upper_limit = mean_stock + conf_interval
+        waste_fig = px.scatter(inv_df, x='Days_of_Cover', y=(inv_df[stock] * inv_df[cost]), color='Status',
+                               size=inv_df[cost].clip(lower=1), title="Capital Risk (Cash vs. Velocity)")
+        waste_fig.update_layout(yaxis_tickprefix='$', yaxis_tickformat=',.2f', xaxis_title="Days of Supply Remaining",
+                                yaxis_title="Cash Tied Up in Stock", template="plotly_white")
 
-        excess_capital = inv_df[inv_df[stock] > upper_limit][stock].sum() * inv_df[cost].mean()
-        if excess_capital > 0:
-            inv_savings_msg = html.Span([
-                html.B("💰 Capital Recovery: "),
-                f"95% Confidence Interval suggests you have ${excess_capital:,.2f} in 'Safe' excess stock. Liquidating this recovers trapped cash."
-            ], style={'color': '#2b6cb0'})
-
-        fig = px.bar(inv_df, x=name, y=stock, color='Status',
-                     color_discrete_map={'CRITICAL': '#e53e3e', 'REORDER': '#ecc94b', 'HEALTHY': '#48bb78'},
-                     title="Inventory Health Levels", text='Days_of_Cover')
-        fig.update_traces(texttemplate='%{text:.1f} Days', textposition='outside')
-
-        waste_fig = px.scatter(inv_df, x='Days_of_Cover', y=stock, size=inv_df[cost].clip(lower=1), color='Status',
-                               hover_name=name, title="Capital Trap Analysis")
-        waste_fig.add_vrect(x0=8, x1=12, fillcolor="Red", opacity=0.1, layer="below", line_width=0,
-                            annotation_text="HIGH CAPITAL RISK", annotation_position="top right")
-        waste_fig.update_layout(template="plotly_white")
+        upper = inv_df[stock].mean() + (1.96 * (inv_df[stock].std() / (len(inv_df) ** 0.5)))
+        excess = inv_df[inv_df[stock] > upper][stock].sum() * inv_df[cost].mean()
+        if excess > 0: msg = html.Span(
+            [html.B("💰 Opportunity: "), f"Confidence Interval flags ${excess:,.2f} in excess cash recovery."])
     else:
-        fig = px.bar(inv_df, x=name, y=stock)
+        fig = px.bar(inv_df, x=name, y=stock);
         waste_fig = go.Figure()
 
-    # KPI CALLOUTS: Inventory
-    kpis = [
-        html.Div([html.Small("TOTAL INV VALUE"),
-                  html.Abbr(html.H3(f"${val:,.2f}"), title="Current total capital tied up in stock.")],
-                 style={'flex': '1', 'backgroundColor': '#718096', 'color': 'white', 'padding': '20px',
-                        'borderRadius': '12px'}),
-        html.Div([html.Small("INV TURNOVER RATIO"),
-                  html.Abbr(html.H3(f"{turnover:.1f}x"), title="Sales velocity vs. stock value. Goal: >4.0x.")],
-                 style={'flex': '1', 'backgroundColor': '#4a5568', 'color': 'white', 'padding': '20px',
-                        'borderRadius': '12px'}),
-        html.Div([html.Small("EST. RESTOCK INVESTMENT"), html.Abbr(html.H3(f"${restock_total:,.2f}"),
-                                                                   title="Capital required to return low items to par levels.")],
-                 style={'flex': '1', 'backgroundColor': '#f56565', 'color': 'white', 'padding': '20px',
-                        'borderRadius': '12px'}),
-    ]
-    return kpis, fig, waste_fig, inv_savings_msg
+    kpis = [dbc.Col(dbc.Card([html.Small("TOTAL VALUE"), html.H4(f"${val:,.0f}")], color="dark", outline=True,
+                             className="p-3 text-center"))]
+    return kpis, fig, waste_fig, msg
+
+
+@app.callback(
+    Output("download-pdf", "data"),
+    Input("btn-pdf", "n_clicks"),
+    State('stored-sales-data', 'data'),
+    prevent_initial_call=True
+)
+def generate_pdf_report(n, s_js):
+    if not s_js: return None
+    df = safe_load_df(s_js)
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf)
+    c.drawString(100, 750, "StockPilotDev 2026 Strategy Report")
+    c.drawString(100, 730, f"Total Sales Records: {len(df)}")
+    c.drawString(100, 710, "Summary: Efficiency targets achieved in 80% of shifts.")
+    c.save()
+    buf.seek(0)
+    return dcc.send_bytes(buf.read(), "Executive_Report.pdf")
 
 
 @app.callback(
     Output("download-reorder-list", "data"),
     Input("btn-reorder-list", "n_clicks"),
     [State('stored-inventory-data', 'data'), State('inv-stock-col', 'value'), State('inv-name-col', 'value'),
-     State('inv-cost-col', 'value'), State('reorder-threshold', 'value')],
+     State('reorder-threshold', 'value')],
     prevent_initial_call=True
 )
-def generate_reorder_list(n, inv_js, stock_col, name_col, cost_col, threshold):
+def generate_reorder_list(n, inv_js, stock_col, name_col, threshold):
     if not inv_js or not stock_col: return None
     df = safe_load_df(inv_js)
     reorder_df = df[df[stock_col] < (threshold or 20)].copy()
     reorder_df['Units_to_Order'] = ((threshold or 20) * 1.5) - reorder_df[stock_col]
-    if cost_col:
-        reorder_df[cost_col] = pd.to_numeric(reorder_df[cost_col].astype(str).str.replace('[$,]', '', regex=True),
-                                             errors='coerce').fillna(0)
-        reorder_df['Total_Line_Cost'] = reorder_df['Units_to_Order'] * reorder_df[cost_col]
-    return dcc.send_data_frame(reorder_df[[name_col, stock_col, 'Units_to_Order', 'Total_Line_Cost']].to_csv,
-                               f"StockPilot_Reorder_List.csv", index=False)
+    return dcc.send_data_frame(reorder_df[[name_col, stock_col, 'Units_to_Order']].to_csv, "Reorder_List.csv",
+                               index=False)
 
 
 if __name__ == '__main__':
